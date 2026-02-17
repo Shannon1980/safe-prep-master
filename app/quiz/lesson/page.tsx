@@ -1,15 +1,15 @@
 'use client';
 
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import Link from 'next/link';
 import {
-  ArrowLeft,
   Check,
   X,
   Sparkles,
   Loader2,
   BookOpen,
+  ChevronLeft,
   ChevronRight,
   BarChart3,
   AlertTriangle,
@@ -19,15 +19,29 @@ import {
   Eye,
   EyeOff,
   Lightbulb,
+  Layers,
 } from 'lucide-react';
 import {
   LESSONS,
   getLessonQuestions,
+  getSectionQuestions,
+  getSectionQuestionCount,
   type LessonConfig,
+  type LessonSection,
   type LessonQuizQuestion,
 } from '@/data/lesson-config';
+import { explainQuestion } from '@/app/lib/gemini';
+import { saveActivity } from '@/app/lib/activity';
+import { getFullLessonPool } from '@/app/lib/question-bank';
+import {
+  saveSession,
+  loadSession,
+  clearSession,
+  formatTimeSince,
+  type LessonQuizSession,
+} from '@/app/lib/session-storage';
 
-type Phase = 'select' | 'quiz' | 'results';
+type Phase = 'select' | 'sections' | 'quiz' | 'results';
 
 interface AnswerState {
   selectedAnswer: number | null;
@@ -71,18 +85,104 @@ export default function LessonQuizPage() {
   const [explanation, setExplanation] = useState('');
   const [loadingExplanation, setLoadingExplanation] = useState(false);
   const [showReview, setShowReview] = useState(false);
+  const [savedSessionData, setSavedSessionData] = useState<LessonQuizSession | null>(null);
+  const [selectedSection, setSelectedSection] = useState<LessonSection | null>(null);
+  const [isSectionQuiz, setIsSectionQuiz] = useState(false);
+  const [lessonPoolCache, setLessonPoolCache] = useState<Record<number, LessonQuizQuestion[]>>({});
 
-  const startLesson = useCallback((lesson: LessonConfig) => {
-    const qs = getLessonQuestions(lesson.id);
+  const savedRef = useRef(false);
+
+  // Check for saved session on mount
+  useEffect(() => {
+    const session = loadSession<LessonQuizSession>('lesson_quiz');
+    if (session) setSavedSessionData(session);
+  }, []);
+
+  const fetchLessonPool = useCallback(async (lessonId: number): Promise<LessonQuizQuestion[]> => {
+    if (lessonPoolCache[lessonId]) return lessonPoolCache[lessonId];
+    const pool = await getFullLessonPool(lessonId);
+    setLessonPoolCache(prev => ({ ...prev, [lessonId]: pool }));
+    return pool;
+  }, [lessonPoolCache]);
+
+  const openLessonSections = useCallback((lesson: LessonConfig) => {
     setSelectedLesson(lesson);
+    setPhase('sections');
+    fetchLessonPool(lesson.id);
+  }, [fetchLessonPool]);
+
+  const startFullLesson = useCallback(async (lesson: LessonConfig) => {
+    clearSession('lesson_quiz');
+    setSavedSessionData(null);
+    const pool = await fetchLessonPool(lesson.id);
+    const qs = pool.sort(() => Math.random() - 0.5);
+    setSelectedLesson(lesson);
+    setSelectedSection(null);
+    setIsSectionQuiz(false);
     setQuestions(qs);
     setAnswerStates(qs.map(() => ({ selectedAnswer: null, selectedAnswers: [], answered: false })));
     setCurrentIndex(0);
     setShowExplanation(false);
     setExplanation('');
     setShowReview(false);
+    savedRef.current = false;
     setPhase('quiz');
-  }, []);
+  }, [fetchLessonPool]);
+
+  const startSectionQuiz = useCallback(async (lesson: LessonConfig, section: LessonSection) => {
+    clearSession('lesson_quiz');
+    setSavedSessionData(null);
+    const pool = await fetchLessonPool(lesson.id);
+    const qs = getSectionQuestions(lesson.id, section.id, pool);
+    if (qs.length === 0) return;
+    setSelectedLesson(lesson);
+    setSelectedSection(section);
+    setIsSectionQuiz(true);
+    setQuestions(qs);
+    setAnswerStates(qs.map(() => ({ selectedAnswer: null, selectedAnswers: [], answered: false })));
+    setCurrentIndex(0);
+    setShowExplanation(false);
+    setExplanation('');
+    setShowReview(false);
+    savedRef.current = false;
+    setPhase('quiz');
+  }, [fetchLessonPool]);
+
+  // Keep legacy startLesson for resume functionality
+  const startLesson = useCallback((lesson: LessonConfig) => {
+    startFullLesson(lesson);
+  }, [startFullLesson]);
+
+  const resumeLesson = useCallback(() => {
+    if (!savedSessionData) return;
+    const lesson = LESSONS.find(l => l.id === savedSessionData.lessonId) || null;
+    setSelectedLesson(lesson);
+    setQuestions(savedSessionData.questions);
+    setAnswerStates(savedSessionData.answerStates);
+    setCurrentIndex(savedSessionData.currentIndex);
+    setShowExplanation(false);
+    setExplanation('');
+    setShowReview(false);
+    savedRef.current = false;
+    setSavedSessionData(null);
+    clearSession('lesson_quiz');
+    setPhase('quiz');
+  }, [savedSessionData]);
+
+  const handleSaveAndExit = useCallback(() => {
+    if (!selectedLesson || questions.length === 0) return;
+    saveSession<LessonQuizSession>({
+      type: 'lesson_quiz',
+      lessonId: selectedLesson.id,
+      questions,
+      answerStates,
+      currentIndex,
+      savedAt: Date.now(),
+    });
+    setPhase('select');
+    const session = loadSession<LessonQuizSession>('lesson_quiz');
+    if (session) setSavedSessionData(session);
+  }, [selectedLesson, questions, answerStates, currentIndex]);
 
   const question = questions[currentIndex];
   const currentState = answerStates[currentIndex];
@@ -141,6 +241,31 @@ export default function LessonQuizPage() {
     return results;
   }, [phase, selectedLesson, questions, answerStates]);
 
+  // Save results to Firestore
+  useEffect(() => {
+    if (phase !== 'results' || savedRef.current || !selectedLesson || questions.length === 0) return;
+    savedRef.current = true;
+    clearSession('lesson_quiz');
+
+    const percentage = Math.round((score / questions.length) * 100);
+    saveActivity({
+      type: 'lesson_quiz',
+      score,
+      total: questions.length,
+      percentage,
+      lessonId: selectedLesson.id,
+      lessonTitle: isSectionQuiz && selectedSection
+        ? `${selectedLesson.title} — ${selectedSection.name}`
+        : selectedLesson.title,
+      sectionBreakdown: sectionResults.map((r) => ({
+        section: r.sectionName,
+        correct: r.correct,
+        total: r.total,
+        percentage: r.percentage,
+      })),
+    });
+  }, [phase, score, questions, selectedLesson, sectionResults]);
+
   const handleSelect = (index: number) => {
     if (currentState.answered) return;
     const q = question;
@@ -185,24 +310,16 @@ export default function LessonQuizPage() {
   const handleGetExplanation = async () => {
     setLoadingExplanation(true);
     try {
-      const res = await fetch('/api/explain', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          question: question.question,
-          options: question.options,
-          correctIndex: question.correctIndex,
-          selectedIndex: currentState.selectedAnswer,
-        }),
-      });
-      const data = await res.json();
-      setExplanation(
-        data.explanation ||
-        'Unable to generate explanation. Add GEMINI_API_KEY to your .env.local for AI explanations.'
+      const result = await explainQuestion(
+        question.question,
+        question.options,
+        question.correctIndex,
+        currentState.selectedAnswer
       );
+      setExplanation(result);
       setShowExplanation(true);
     } catch {
-      setExplanation('Unable to generate explanation. Add GEMINI_API_KEY to your .env.local.');
+      setExplanation('Unable to generate explanation. Please try again.');
       setShowExplanation(true);
     } finally {
       setLoadingExplanation(false);
@@ -213,30 +330,48 @@ export default function LessonQuizPage() {
   if (phase === 'select') {
     return (
       <main className="min-h-screen bg-gradient-to-br from-indigo-50 to-blue-50 text-gray-900">
-        <header className="p-6 max-w-4xl mx-auto">
-          <Link
-            href="/quiz"
-            className="inline-flex items-center gap-2 text-indigo-600 hover:text-indigo-700"
-          >
-            <ArrowLeft className="w-5 h-5" />
-            Back to Quizzes
-          </Link>
-        </header>
-
-        <div className="max-w-3xl mx-auto px-6 py-4">
+        <div className="max-w-3xl mx-auto px-6 py-6">
           <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
             <h1 className="text-3xl font-bold mb-2 text-center">Lesson Quizzes</h1>
             <p className="text-gray-600 text-center mb-10">
               Test your knowledge lesson by lesson. Get detailed feedback on which sections need more study.
             </p>
 
+            {savedSessionData && (
+              <div className="bg-indigo-50 border border-indigo-200 rounded-2xl p-5 mb-6">
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="font-bold text-indigo-800">Resume Saved Quiz</h3>
+                  <span className="text-xs text-indigo-500">Saved {formatTimeSince(savedSessionData.savedAt)}</span>
+                </div>
+                <p className="text-sm text-indigo-600 mb-3">
+                  Lesson {savedSessionData.lessonId} &bull;{' '}
+                  {savedSessionData.answerStates.filter(s => s.answered).length}/{savedSessionData.questions.length} answered &bull;{' '}
+                  Question {savedSessionData.currentIndex + 1}
+                </p>
+                <div className="flex gap-3">
+                  <button
+                    onClick={resumeLesson}
+                    className="flex-1 py-2.5 bg-indigo-600 text-white font-semibold rounded-xl hover:bg-indigo-700 transition-colors"
+                  >
+                    Resume Quiz
+                  </button>
+                  <button
+                    onClick={() => { clearSession('lesson_quiz'); setSavedSessionData(null); }}
+                    className="px-4 py-2.5 bg-white text-gray-600 font-medium rounded-xl border border-gray-200 hover:bg-gray-50 transition-colors"
+                  >
+                    Discard
+                  </button>
+                </div>
+              </div>
+            )}
+
             <div className="space-y-4">
               {LESSONS.map((lesson) => {
-                const count = getLessonQuestions(lesson.id).length;
+                const count = lessonPoolCache[lesson.id]?.length ?? getLessonQuestions(lesson.id).length;
                 return (
                   <button
                     key={lesson.id}
-                    onClick={() => startLesson(lesson)}
+                    onClick={() => openLessonSections(lesson)}
                     className="w-full bg-white rounded-2xl shadow-sm border border-gray-100 p-5 text-left hover:border-indigo-300 hover:shadow-md transition-all group"
                   >
                     <div className="flex items-center gap-4">
@@ -263,6 +398,88 @@ export default function LessonQuizPage() {
     );
   }
 
+  // ── SECTION SELECTION ──
+  if (phase === 'sections' && selectedLesson) {
+    const totalCount = lessonPoolCache[selectedLesson.id]?.length ?? getLessonQuestions(selectedLesson.id).length;
+    return (
+      <main className="min-h-screen bg-gradient-to-br from-indigo-50 to-blue-50 text-gray-900">
+        <div className="max-w-3xl mx-auto px-6 py-6">
+          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
+            <button
+              onClick={() => setPhase('select')}
+              className="inline-flex items-center gap-2 text-indigo-600 hover:text-indigo-700 mb-6 text-sm font-medium"
+            >
+              <ChevronLeft className="w-4 h-4" />
+              All Lessons
+            </button>
+
+            <div className="text-center mb-8">
+              <div className="w-14 h-14 bg-indigo-100 rounded-xl flex items-center justify-center mx-auto mb-3">
+                <span className="text-2xl font-bold text-indigo-600">{selectedLesson.id}</span>
+              </div>
+              <h1 className="text-2xl font-bold">{selectedLesson.title}</h1>
+              <p className="text-gray-500 text-sm mt-1">{selectedLesson.description}</p>
+            </div>
+
+            {/* Full Lesson Quiz */}
+            <button
+              onClick={() => startFullLesson(selectedLesson)}
+              className="w-full bg-indigo-600 text-white rounded-2xl p-5 text-left hover:bg-indigo-700 transition-all mb-6 group"
+            >
+              <div className="flex items-center gap-4">
+                <div className="w-12 h-12 bg-white/20 rounded-xl flex items-center justify-center flex-shrink-0">
+                  <BookOpen className="w-6 h-6" />
+                </div>
+                <div className="flex-1">
+                  <h3 className="font-bold text-lg">Full Lesson Quiz</h3>
+                  <p className="text-indigo-200 text-sm mt-0.5">
+                    All {totalCount} questions across all sections
+                  </p>
+                </div>
+                <ChevronRight className="w-5 h-5 text-indigo-300 group-hover:text-white transition-colors flex-shrink-0" />
+              </div>
+            </button>
+
+            {/* Section Quizzes */}
+            <div className="flex items-center gap-2 mb-4">
+              <Layers className="w-5 h-5 text-gray-400" />
+              <h2 className="text-lg font-bold">Section Quizzes</h2>
+              <span className="text-xs text-gray-400">Max 10 questions each</span>
+            </div>
+            <div className="space-y-3">
+              {selectedLesson.sections.map((section) => {
+                const sectionTotal = getSectionQuestionCount(selectedLesson.id, section.id, lessonPoolCache[selectedLesson.id]);
+                const quizCount = Math.min(sectionTotal, 10);
+                return (
+                  <button
+                    key={section.id}
+                    onClick={() => startSectionQuiz(selectedLesson, section)}
+                    disabled={sectionTotal === 0}
+                    className="w-full bg-white rounded-xl shadow-sm border border-gray-100 p-4 text-left hover:border-indigo-300 hover:shadow-md transition-all group disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 bg-emerald-50 rounded-lg flex items-center justify-center flex-shrink-0">
+                        <Layers className="w-5 h-5 text-emerald-600" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <h3 className="font-semibold">{section.name}</h3>
+                        <p className="text-xs text-gray-400 mt-0.5">
+                          {quizCount} question{quizCount !== 1 ? 's' : ''}
+                          {sectionTotal > 10 && ` (from ${sectionTotal} available)`}
+                        </p>
+                      </div>
+                      <ChevronRight className="w-4 h-4 text-gray-300 group-hover:text-indigo-500 transition-colors flex-shrink-0" />
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </motion.div>
+        </div>
+      </main>
+    );
+  }
+
   // ── RESULTS ──
   if (phase === 'results' && selectedLesson) {
     const percentage = Math.round((score / questions.length) * 100);
@@ -271,24 +488,25 @@ export default function LessonQuizPage() {
 
     return (
       <main className="min-h-screen bg-gradient-to-br from-indigo-50 to-blue-50 text-gray-900">
-        <header className="p-6 max-w-4xl mx-auto">
-          <button
-            onClick={() => setPhase('select')}
-            className="inline-flex items-center gap-2 text-indigo-600 hover:text-indigo-700"
-          >
-            <ArrowLeft className="w-5 h-5" />
-            Back to Lessons
-          </button>
-        </header>
-
         <div className="max-w-3xl mx-auto px-6 py-4">
+          <button
+            onClick={() => setPhase('sections')}
+            className="inline-flex items-center gap-2 text-indigo-600 hover:text-indigo-700 mb-4"
+          >
+            <ChevronLeft className="w-5 h-5" />
+            Back to Lesson {selectedLesson.id}
+          </button>
           <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }}>
             {/* Overall Score */}
             <div className="text-center mb-8">
               <h1 className="text-3xl font-bold mb-1">
-                Lesson {selectedLesson.id}: {selectedLesson.shortTitle}
+                {isSectionQuiz && selectedSection
+                  ? selectedSection.name
+                  : `Lesson ${selectedLesson.id}: ${selectedLesson.shortTitle}`}
               </h1>
-              <p className="text-gray-500 mb-6">Quiz Complete</p>
+              <p className="text-gray-500 mb-6">
+                {isSectionQuiz ? 'Section Quiz Complete' : 'Quiz Complete'}
+              </p>
               <div className="inline-flex items-center gap-6 bg-white rounded-2xl shadow-sm border border-gray-100 px-8 py-5">
                 <div>
                   <p className="text-4xl font-bold text-indigo-600">{percentage}%</p>
@@ -464,11 +682,22 @@ export default function LessonQuizPage() {
             {/* Actions */}
             <div className="flex gap-4 flex-wrap">
               <button
-                onClick={() => startLesson(selectedLesson)}
+                onClick={() =>
+                  isSectionQuiz && selectedSection
+                    ? startSectionQuiz(selectedLesson, selectedSection)
+                    : startFullLesson(selectedLesson)
+                }
                 className="flex-1 py-3 bg-indigo-600 text-white rounded-xl font-semibold hover:bg-indigo-700 transition-colors flex items-center justify-center gap-2"
               >
                 <RotateCcw className="w-5 h-5" />
-                Retake Lesson {selectedLesson.id}
+                {isSectionQuiz ? 'Retake Section' : `Retake Lesson ${selectedLesson.id}`}
+              </button>
+              <button
+                onClick={() => setPhase('sections')}
+                className="flex-1 py-3 bg-white text-gray-700 rounded-xl font-semibold border border-gray-200 hover:bg-gray-50 transition-colors flex items-center justify-center gap-2"
+              >
+                <Layers className="w-5 h-5" />
+                {isSectionQuiz ? 'Other Sections' : 'Section Quizzes'}
               </button>
               <button
                 onClick={() => setPhase('select')}
@@ -477,13 +706,6 @@ export default function LessonQuizPage() {
                 <BookOpen className="w-5 h-5" />
                 Other Lessons
               </button>
-              <Link
-                href="/"
-                className="flex-1 py-3 bg-white text-gray-700 rounded-xl font-semibold border border-gray-200 hover:bg-gray-50 transition-colors flex items-center justify-center gap-2"
-              >
-                <ArrowLeft className="w-5 h-5" />
-                Home
-              </Link>
             </div>
           </motion.div>
         </div>
@@ -503,13 +725,13 @@ export default function LessonQuizPage() {
 
   return (
     <main className="min-h-screen bg-gradient-to-br from-indigo-50 to-blue-50 text-gray-900">
-      <header className="p-6 flex justify-between items-center max-w-3xl mx-auto">
+      <div className="p-4 flex justify-between items-center max-w-3xl mx-auto">
         <button
-          onClick={() => setPhase('select')}
-          className="inline-flex items-center gap-2 text-indigo-600 hover:text-indigo-700"
+          onClick={handleSaveAndExit}
+          className="inline-flex items-center gap-2 text-indigo-600 hover:text-indigo-700 text-sm font-medium"
         >
-          <ArrowLeft className="w-5 h-5" />
-          Back
+          <ChevronLeft className="w-4 h-4" />
+          Save &amp; Exit
         </button>
         <span className="text-sm font-medium text-gray-500">
           {currentIndex + 1} of {questions.length} &bull; Score:{' '}
@@ -519,13 +741,15 @@ export default function LessonQuizPage() {
             return `${correct}/${answeredCount} (${pct}%)`;
           })()}
         </span>
-      </header>
+      </div>
 
       {/* Progress bar */}
       <div className="max-w-3xl mx-auto px-6 mb-4">
         <div className="flex items-center gap-3 mb-1">
           <span className="text-xs font-medium text-indigo-600">
-            Lesson {selectedLesson?.id}: {selectedLesson?.shortTitle}
+            {isSectionQuiz && selectedSection
+              ? `Lesson ${selectedLesson?.id} — ${selectedSection.name}`
+              : `Lesson ${selectedLesson?.id}: ${selectedLesson?.shortTitle}`}
           </span>
           <span className="text-xs text-gray-400">
             {Math.round(((currentIndex + 1) / questions.length) * 100)}%

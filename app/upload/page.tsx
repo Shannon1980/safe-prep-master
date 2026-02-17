@@ -2,9 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import Link from 'next/link';
 import {
-  ArrowLeft,
   Upload,
   FileText,
   Trash2,
@@ -142,17 +140,12 @@ export default function UploadPage() {
 
   return (
     <main className="min-h-screen bg-gradient-to-br from-indigo-50 to-blue-50 text-gray-900">
-      <header className="p-6 flex justify-between items-center max-w-4xl mx-auto">
-        <Link href="/" className="inline-flex items-center gap-2 text-indigo-600 hover:text-indigo-700">
-          <ArrowLeft className="w-5 h-5" />
-          Back
-        </Link>
+      <div className="p-4 max-w-4xl mx-auto">
         <h1 className="text-lg font-bold text-indigo-700 flex items-center gap-2">
           <BookOpen className="w-5 h-5" />
           Study Materials
         </h1>
-        <div className="w-20" />
-      </header>
+      </div>
 
       <div className="max-w-4xl mx-auto px-6 pb-12">
         {/* Info Banner */}

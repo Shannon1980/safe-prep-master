@@ -6,7 +6,15 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:load": "node tests/load-test.mjs",
+    "test:load:quick": "node tests/load-test.mjs --concurrency 50 --duration 5",
+    "predeploy": "npm test && npm run build",
+    "deploy": "npx firebase-tools deploy --only hosting",
+    "deploy:all": "npm test && npm run build && npx firebase-tools deploy",
+    "deploy:rules": "npx firebase-tools deploy --only firestore:rules,firestore:indexes"
   },
   "dependencies": {
     "@google/genai": "^1.41.0",
@@ -27,9 +35,12 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@vitejs/plugin-react": "^5.1.4",
+    "autocannon": "^8.0.0",
     "eslint": "^9",
     "eslint-config-next": "16.1.6",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^4.0.18"
   }
 }

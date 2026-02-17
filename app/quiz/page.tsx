@@ -1,11 +1,20 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import Link from 'next/link';
-import { ArrowLeft, Check, X, Sparkles, Loader2, Upload, BookOpen, GraduationCap } from 'lucide-react';
+import { Check, X, Sparkles, Loader2, Upload, BookOpen, GraduationCap, ChevronLeft } from 'lucide-react';
 import { QUIZ_QUESTIONS, type QuizQuestion } from '@/data/quiz-questions';
 import { getAllStudyContent } from '@/app/lib/study-content';
+import { explainQuestion, generateQuizFromContent } from '@/app/lib/gemini';
+import { saveActivity } from '@/app/lib/activity';
+import {
+  saveSession,
+  loadSession,
+  clearSession,
+  formatTimeSince,
+  type PracticeQuizSession,
+} from '@/app/lib/session-storage';
 
 type QuizMode = 'select' | 'builtin' | 'custom' | 'loading-custom';
 
@@ -22,20 +31,64 @@ export default function QuizPage() {
   const [loadingExplanation, setLoadingExplanation] = useState(false);
   const [hasStudyContent, setHasStudyContent] = useState(false);
   const [generateError, setGenerateError] = useState('');
+  const [savedSessionData, setSavedSessionData] = useState<PracticeQuizSession | null>(null);
+  const savedRef = useRef(false);
 
   useEffect(() => {
     getAllStudyContent().then((content) => {
       setHasStudyContent(!!content.trim());
     });
+    const session = loadSession<PracticeQuizSession>('practice_quiz');
+    if (session) setSavedSessionData(session);
   }, []);
 
   const startBuiltIn = () => {
+    clearSession('practice_quiz');
+    setSavedSessionData(null);
     setQuestions(QUIZ_QUESTIONS);
     setMode('builtin');
     resetQuiz();
   };
 
+  const resumeQuiz = () => {
+    if (!savedSessionData) return;
+    setQuestions(savedSessionData.questions);
+    setCurrentIndex(savedSessionData.currentIndex);
+    setScore(savedSessionData.score);
+    setMode(savedSessionData.mode as QuizMode);
+    setSelectedAnswer(null);
+    setShowResult(false);
+    setAnswered(false);
+    setShowExplanation(false);
+    setExplanation('');
+    savedRef.current = false;
+    setSavedSessionData(null);
+    clearSession('practice_quiz');
+  };
+
+  const handleSaveAndExit = () => {
+    if (questions.length === 0) return;
+    saveSession<PracticeQuizSession>({
+      type: 'practice_quiz',
+      questions,
+      currentIndex,
+      score,
+      mode,
+      savedAt: Date.now(),
+    });
+    setMode('select');
+    setCurrentIndex(0);
+    setSelectedAnswer(null);
+    setShowResult(false);
+    setScore(0);
+    setAnswered(false);
+    const session = loadSession<PracticeQuizSession>('practice_quiz');
+    if (session) setSavedSessionData(session);
+  };
+
   const startCustomQuiz = async () => {
+    clearSession('practice_quiz');
+    setSavedSessionData(null);
     setMode('loading-custom');
     setGenerateError('');
     try {
@@ -45,18 +98,13 @@ export default function QuizPage() {
         setMode('select');
         return;
       }
-      const res = await fetch('/api/generate-quiz', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content, count: 10 }),
-      });
-      const data = await res.json();
-      if (data.error) {
-        setGenerateError(data.error);
+      const result = await generateQuizFromContent(content, 10);
+      if (result.error || !result.questions) {
+        setGenerateError(result.error || 'Failed to generate quiz.');
         setMode('select');
         return;
       }
-      setQuestions(data.questions);
+      setQuestions(result.questions);
       setMode('custom');
       resetQuiz();
     } catch {
@@ -73,10 +121,27 @@ export default function QuizPage() {
     setAnswered(false);
     setShowExplanation(false);
     setExplanation('');
+    savedRef.current = false;
   };
 
   const question = questions[currentIndex];
   const isLastQuestion = currentIndex === questions.length - 1;
+
+  // Save results to Firestore when quiz completes
+  useEffect(() => {
+    if (!(isLastQuestion && answered) || savedRef.current || questions.length === 0) return;
+    savedRef.current = true;
+    clearSession('practice_quiz');
+
+    const percentage = Math.round((score / questions.length) * 100);
+    saveActivity({
+      type: 'practice_quiz',
+      score,
+      total: questions.length,
+      percentage,
+      quizMode: mode,
+    });
+  }, [isLastQuestion, answered, score, questions, mode]);
 
   const handleSelectAnswer = (index: number) => {
     if (answered) return;
@@ -101,21 +166,16 @@ export default function QuizPage() {
   const handleGetExplanation = async () => {
     setLoadingExplanation(true);
     try {
-      const res = await fetch('/api/explain', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          question: question.question,
-          options: question.options,
-          correctIndex: question.correctIndex,
-          selectedIndex: selectedAnswer,
-        }),
-      });
-      const data = await res.json();
-      setExplanation(data.explanation || 'Unable to generate explanation. Add GEMINI_API_KEY to your .env.local for AI explanations.');
+      const result = await explainQuestion(
+        question.question,
+        question.options,
+        question.correctIndex,
+        selectedAnswer
+      );
+      setExplanation(result);
       setShowExplanation(true);
     } catch {
-      setExplanation('Unable to generate explanation. Add GEMINI_API_KEY to your .env.local for AI explanations.');
+      setExplanation('Unable to generate explanation. Please try again.');
       setShowExplanation(true);
     } finally {
       setLoadingExplanation(false);
@@ -134,17 +194,38 @@ export default function QuizPage() {
   if (mode === 'select' || mode === 'loading-custom') {
     return (
       <main className="min-h-screen bg-gradient-to-br from-indigo-50 to-blue-50 text-gray-900">
-        <header className="p-6 max-w-3xl mx-auto">
-          <Link href="/" className="inline-flex items-center gap-2 text-indigo-600 hover:text-indigo-700">
-            <ArrowLeft className="w-5 h-5" />
-            Back to Home
-          </Link>
-        </header>
-
         <div className="max-w-2xl mx-auto px-6 py-8">
           <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
             <h1 className="text-3xl font-bold mb-2 text-center">Practice Quiz</h1>
             <p className="text-gray-600 text-center mb-10">Choose your quiz type</p>
+
+            {savedSessionData && (
+              <div className="bg-indigo-50 border border-indigo-200 rounded-2xl p-5 mb-6">
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="font-bold text-indigo-800">Resume Saved Quiz</h3>
+                  <span className="text-xs text-indigo-500">Saved {formatTimeSince(savedSessionData.savedAt)}</span>
+                </div>
+                <p className="text-sm text-indigo-600 mb-3">
+                  {savedSessionData.mode === 'custom' ? 'AI-Generated' : 'Built-in'} Quiz &bull;{' '}
+                  Question {savedSessionData.currentIndex + 1}/{savedSessionData.questions.length} &bull;{' '}
+                  Score: {savedSessionData.score}
+                </p>
+                <div className="flex gap-3">
+                  <button
+                    onClick={resumeQuiz}
+                    className="flex-1 py-2.5 bg-indigo-600 text-white font-semibold rounded-xl hover:bg-indigo-700 transition-colors"
+                  >
+                    Resume Quiz
+                  </button>
+                  <button
+                    onClick={() => { clearSession('practice_quiz'); setSavedSessionData(null); }}
+                    className="px-4 py-2.5 bg-white text-gray-600 font-medium rounded-xl border border-gray-200 hover:bg-gray-50 transition-colors"
+                  >
+                    Discard
+                  </button>
+                </div>
+              </div>
+            )}
 
             {generateError && (
               <div className="bg-red-50 border border-red-200 rounded-xl p-4 mb-6 text-sm text-red-700">
@@ -242,12 +323,6 @@ export default function QuizPage() {
     const percentage = Math.round((score / questions.length) * 100);
     return (
       <main className="min-h-screen bg-gradient-to-br from-indigo-50 to-blue-50 text-gray-900">
-        <header className="p-6 max-w-3xl mx-auto">
-          <Link href="/" className="inline-flex items-center gap-2 text-indigo-600 hover:text-indigo-700">
-            <ArrowLeft className="w-5 h-5" />
-            Back to Home
-          </Link>
-        </header>
         <motion.div
           initial={{ opacity: 0, scale: 0.95 }}
           animate={{ opacity: 1, scale: 1 }}
@@ -278,7 +353,7 @@ export default function QuizPage() {
               href="/"
               className="px-6 py-3 bg-white text-gray-700 rounded-xl font-semibold border border-gray-200 hover:bg-gray-50 transition-colors inline-flex items-center gap-2"
             >
-              Back to Home
+              Home
             </Link>
           </div>
         </motion.div>
@@ -289,19 +364,22 @@ export default function QuizPage() {
   // Quiz in progress
   return (
     <main className="min-h-screen bg-gradient-to-br from-indigo-50 to-blue-50 text-gray-900">
-      <header className="p-6 flex justify-between items-center max-w-3xl mx-auto">
-        <Link href="/" className="inline-flex items-center gap-2 text-indigo-600 hover:text-indigo-700">
-          <ArrowLeft className="w-5 h-5" />
-          Back
-        </Link>
+      <div className="p-4 flex justify-between items-center max-w-3xl mx-auto">
+        <button
+          onClick={handleSaveAndExit}
+          className="inline-flex items-center gap-1 text-indigo-600 hover:text-indigo-700 text-sm font-medium"
+        >
+          <ChevronLeft className="w-4 h-4" />
+          Save &amp; Exit
+        </button>
         <span className="text-sm font-medium text-gray-500">
-          Question {currentIndex + 1} of {questions.length} • Score: {score}/{currentIndex + (answered ? 1 : 0)}{' '}
+          {currentIndex + 1}/{questions.length} &bull; Score: {score}/{currentIndex + (answered ? 1 : 0)}{' '}
           ({currentIndex + (answered ? 1 : 0) > 0 ? Math.round((score / (currentIndex + (answered ? 1 : 0))) * 100) : 0}%)
           {mode === 'custom' && (
             <span className="ml-2 text-purple-600">(AI Generated)</span>
           )}
         </span>
-      </header>
+      </div>
 
       <div className="max-w-2xl mx-auto px-6">
         <AnimatePresence mode="wait">

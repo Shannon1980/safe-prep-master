@@ -4,7 +4,6 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import Link from 'next/link';
 import {
-  ArrowLeft,
   ArrowRight,
   Clock,
   Flag,
@@ -25,6 +24,15 @@ import {
   type ExamQuestion,
   type ExamDomain,
 } from '@/data/exam-questions';
+import { saveActivity } from '@/app/lib/activity';
+import { getFullExamPool } from '@/app/lib/question-bank';
+import {
+  saveSession,
+  loadSession,
+  clearSession,
+  formatTimeSince,
+  type ExamSession,
+} from '@/app/lib/session-storage';
 
 type ExamPhase = 'intro' | 'exam' | 'review' | 'results';
 
@@ -48,16 +56,38 @@ export default function ExamPage() {
   const [timeRemaining, setTimeRemaining] = useState(EXAM_CONFIG.timeLimitMinutes * 60);
   const [showNavigator, setShowNavigator] = useState(false);
   const [showSubmitConfirm, setShowSubmitConfirm] = useState(false);
+  const [showSaveConfirm, setShowSaveConfirm] = useState(false);
+  const [savedSession, setSavedSession] = useState<ExamSession | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const startExam = useCallback(() => {
-    const selected = selectExamQuestions(EXAM_CONFIG.totalQuestions);
+  // Check for saved session on mount
+  useEffect(() => {
+    const session = loadSession<ExamSession>('exam');
+    if (session) setSavedSession(session);
+  }, []);
+
+  const startExam = useCallback(async () => {
+    clearSession('exam');
+    setSavedSession(null);
+    const pool = await getFullExamPool();
+    const selected = selectExamQuestions(EXAM_CONFIG.totalQuestions, pool);
     setQuestions(selected);
     setQuestionStates(selected.map(() => ({ selectedAnswer: null, selectedAnswers: [], flagged: false })));
     setCurrentIndex(0);
     setTimeRemaining(EXAM_CONFIG.timeLimitMinutes * 60);
     setPhase('exam');
   }, []);
+
+  const resumeExam = useCallback(() => {
+    if (!savedSession) return;
+    setQuestions(savedSession.questions);
+    setQuestionStates(savedSession.questionStates);
+    setCurrentIndex(savedSession.currentIndex);
+    setTimeRemaining(savedSession.timeRemaining);
+    setSavedSession(null);
+    clearSession('exam');
+    setPhase('exam');
+  }, [savedSession]);
 
   // Timer
   useEffect(() => {
@@ -76,6 +106,77 @@ export default function ExamPage() {
       if (timerRef.current) clearInterval(timerRef.current);
     };
   }, [phase]);
+
+  // Auto-save exam state every 30 seconds and on beforeunload
+  const questionsRef = useRef(questions);
+  const statesRef = useRef(questionStates);
+  const indexRef = useRef(currentIndex);
+  const timeRef = useRef(timeRemaining);
+  questionsRef.current = questions;
+  statesRef.current = questionStates;
+  indexRef.current = currentIndex;
+  timeRef.current = timeRemaining;
+
+  const saveCurrentSession = useCallback(() => {
+    if (questionsRef.current.length === 0) return;
+    saveSession<ExamSession>({
+      type: 'exam',
+      questions: questionsRef.current,
+      questionStates: statesRef.current,
+      currentIndex: indexRef.current,
+      timeRemaining: timeRef.current,
+      savedAt: Date.now(),
+    });
+  }, []);
+
+  useEffect(() => {
+    if (phase !== 'exam') return;
+    const interval = setInterval(saveCurrentSession, 30_000);
+    const handleUnload = () => saveCurrentSession();
+    window.addEventListener('beforeunload', handleUnload);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('beforeunload', handleUnload);
+    };
+  }, [phase, saveCurrentSession]);
+
+  const handleSaveAndExit = () => {
+    if (timerRef.current) clearInterval(timerRef.current);
+    saveCurrentSession();
+    setShowSaveConfirm(false);
+    setPhase('intro');
+    const session = loadSession<ExamSession>('exam');
+    if (session) setSavedSession(session);
+  };
+
+  // Save results to Firestore when exam completes
+  const savedRef = useRef(false);
+  useEffect(() => {
+    if (phase !== 'results' || savedRef.current || questions.length === 0) return;
+    savedRef.current = true;
+    clearSession('exam');
+
+    const score = questions.reduce((acc, q, i) => acc + (isQuestionCorrect(q, questionStates[i]) ? 1 : 0), 0);
+    const percentage = Math.round((score / questions.length) * 100);
+    const timeTaken = EXAM_CONFIG.timeLimitMinutes * 60 - timeRemaining;
+
+    const domainBreakdown: Record<string, { correct: number; total: number }> = {};
+    questions.forEach((q, i) => {
+      if (!domainBreakdown[q.domain]) domainBreakdown[q.domain] = { correct: 0, total: 0 };
+      domainBreakdown[q.domain].total++;
+      if (isQuestionCorrect(q, questionStates[i])) domainBreakdown[q.domain].correct++;
+    });
+
+    saveActivity({
+      type: 'exam',
+      score,
+      total: questions.length,
+      percentage,
+      passed: percentage >= EXAM_CONFIG.passingPercentage,
+      timeTakenSeconds: timeTaken,
+      domainBreakdown,
+    });
+  }, [phase, questions, questionStates, timeRemaining]);
 
   const selectAnswer = (index: number) => {
     const q = questions[currentIndex];
@@ -142,12 +243,6 @@ export default function ExamPage() {
   if (phase === 'intro') {
     return (
       <main className="min-h-screen bg-gradient-to-br from-slate-900 to-indigo-950 text-white">
-        <header className="p-6 max-w-4xl mx-auto">
-          <Link href="/" className="inline-flex items-center gap-2 text-indigo-300 hover:text-indigo-200">
-            <ArrowLeft className="w-5 h-5" />
-            Back to Home
-          </Link>
-        </header>
         <div className="max-w-2xl mx-auto px-6 py-12">
           <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
             <div className="text-center mb-10">
@@ -198,14 +293,45 @@ export default function ExamPage() {
                 <li>- You can skip and return to questions</li>
                 <li>- Flag questions to review later</li>
                 <li>- The exam auto-submits when time runs out</li>
+                <li>- Questions are randomly drawn from a 150+ question pool &mdash; each attempt is a different mix</li>
               </ul>
             </div>
+
+            {savedSession && (
+              <div className="bg-indigo-500/10 border border-indigo-500/30 rounded-xl p-5 mb-4">
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="font-bold text-lg text-indigo-300">Resume Saved Exam</h3>
+                  <span className="text-xs text-indigo-400">Saved {formatTimeSince(savedSession.savedAt)}</span>
+                </div>
+                <div className="flex gap-3 text-sm text-indigo-300 mb-4">
+                  <span>{savedSession.questionStates.filter(s => s.selectedAnswers.length > 0).length}/{savedSession.questions.length} answered</span>
+                  <span>&bull;</span>
+                  <span>{formatTime(savedSession.timeRemaining)} remaining</span>
+                  <span>&bull;</span>
+                  <span>On question {savedSession.currentIndex + 1}</span>
+                </div>
+                <div className="flex gap-3">
+                  <button
+                    onClick={resumeExam}
+                    className="flex-1 py-3 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 transition-colors"
+                  >
+                    Resume Exam
+                  </button>
+                  <button
+                    onClick={() => { clearSession('exam'); setSavedSession(null); }}
+                    className="px-4 py-3 bg-white/10 text-white/70 font-medium rounded-xl hover:bg-white/20 transition-colors"
+                  >
+                    Discard
+                  </button>
+                </div>
+              </div>
+            )}
 
             <button
               onClick={startExam}
               className="w-full py-4 bg-indigo-600 text-white text-lg font-bold rounded-xl hover:bg-indigo-700 transition-colors"
             >
-              Start Exam
+              {savedSession ? 'Start New Exam' : 'Start Exam'}
             </button>
           </motion.div>
         </div>
@@ -330,7 +456,6 @@ export default function ExamPage() {
                 href="/"
                 className="flex-1 py-3 bg-white/10 text-white rounded-xl font-semibold hover:bg-white/20 transition-colors flex items-center justify-center gap-2"
               >
-                <ArrowLeft className="w-5 h-5" />
                 Home
               </Link>
             </div>
@@ -344,15 +469,15 @@ export default function ExamPage() {
   if (phase === 'review') {
     return (
       <main className="min-h-screen bg-gradient-to-br from-slate-900 to-indigo-950 text-white">
-        <header className="p-4 border-b border-white/10 bg-white/5 backdrop-blur sticky top-0 z-10">
+        <div className="p-4 border-b border-white/10 bg-white/5 backdrop-blur sticky top-0 z-10">
           <div className="max-w-4xl mx-auto flex items-center justify-between">
             <button onClick={() => setPhase('results')} className="inline-flex items-center gap-2 text-indigo-300 hover:text-indigo-200">
-              <ArrowLeft className="w-5 h-5" /> Back to Results
+              <ChevronLeft className="w-5 h-5" /> Back to Results
             </button>
             <h1 className="font-bold">Answer Review</h1>
             <div />
           </div>
-        </header>
+        </div>
         <div className="max-w-3xl mx-auto px-6 py-6 space-y-6">
           {questions.map((q, i) => {
             const qState = questionStates[i];
@@ -504,6 +629,50 @@ export default function ExamPage() {
                 {unansweredCount > 0 && (
                   <p>{unansweredCount} question{unansweredCount > 1 ? 's' : ''} unanswered</p>
                 )}
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Save & Exit Confirmation */}
+      <AnimatePresence>
+        {showSaveConfirm && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/60 backdrop-blur-sm z-30 flex items-center justify-center p-4"
+            onClick={() => setShowSaveConfirm(false)}
+          >
+            <motion.div
+              initial={{ scale: 0.95 }}
+              animate={{ scale: 1 }}
+              exit={{ scale: 0.95 }}
+              className="bg-slate-800 rounded-2xl p-6 max-w-md w-full"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <h3 className="font-bold text-lg mb-3">Save & Exit?</h3>
+              <p className="text-sm text-indigo-300 mb-2">
+                Your progress will be saved and you can resume later.
+              </p>
+              <div className="bg-white/5 rounded-lg p-3 mb-4 text-sm text-indigo-200 space-y-1">
+                <p>{answeredCount}/{questions.length} questions answered</p>
+                <p>{formatTime(timeRemaining)} remaining on the clock</p>
+              </div>
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setShowSaveConfirm(false)}
+                  className="flex-1 py-2.5 bg-white/10 rounded-xl font-medium hover:bg-white/20 transition-colors"
+                >
+                  Continue Exam
+                </button>
+                <button
+                  onClick={handleSaveAndExit}
+                  className="flex-1 py-2.5 bg-indigo-600 rounded-xl font-medium hover:bg-indigo-700 transition-colors"
+                >
+                  Save & Exit
+                </button>
               </div>
             </motion.div>
           </motion.div>
@@ -665,6 +834,12 @@ export default function ExamPage() {
                 Skip
               </button>
             )}
+            <button
+              onClick={() => setShowSaveConfirm(true)}
+              className="px-4 py-2.5 bg-white/10 text-white/80 rounded-xl font-medium hover:bg-white/20 transition-colors text-sm"
+            >
+              Save &amp; Exit
+            </button>
             <button
               onClick={() => setShowSubmitConfirm(true)}
               className="px-5 py-2.5 bg-green-600 text-white rounded-xl font-medium hover:bg-green-700 transition-colors"

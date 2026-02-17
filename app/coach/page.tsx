@@ -3,8 +3,9 @@
 import { useState, useRef, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import Link from 'next/link';
-import { ArrowLeft, Send, Loader2, Bot, User, BookOpen } from 'lucide-react';
+import { Send, Loader2, Bot, User, BookOpen } from 'lucide-react';
 import { getAllStudyContent } from '@/app/lib/study-content';
+import { chatWithCoach } from '@/app/lib/gemini';
 
 interface Message {
   role: 'user' | 'assistant';
@@ -45,13 +46,8 @@ export default function CoachPage() {
     setLoading(true);
 
     try {
-      const res = await fetch('/api/coach', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: trimmed, context: studyContext }),
-      });
-      const data = await res.json();
-      setMessages((m) => [...m, { role: 'assistant', content: data.reply || 'No response.' }]);
+      const reply = await chatWithCoach(trimmed, studyContext);
+      setMessages((m) => [...m, { role: 'assistant', content: reply }]);
     } catch {
       setMessages((m) => [
         ...m,
@@ -64,12 +60,8 @@ export default function CoachPage() {
 
   return (
     <main className="min-h-screen bg-gradient-to-br from-indigo-50 to-blue-50 text-gray-900 flex flex-col">
-      <header className="p-4 border-b border-indigo-100 bg-white/80 backdrop-blur">
+      <div className="p-4 border-b border-indigo-100 bg-white/80">
         <div className="max-w-3xl mx-auto flex items-center justify-between">
-          <Link href="/" className="inline-flex items-center gap-2 text-indigo-600 hover:text-indigo-700">
-            <ArrowLeft className="w-5 h-5" />
-            Back
-          </Link>
           <h1 className="text-lg font-bold text-indigo-700 flex items-center gap-2">
             <Bot className="w-5 h-5" />
             AI Coach
@@ -79,7 +71,7 @@ export default function CoachPage() {
             {hasContent ? 'Materials' : 'Upload'}
           </Link>
         </div>
-      </header>
+      </div>
 
       {hasContent && (
         <div className="max-w-3xl mx-auto px-4 pt-2">

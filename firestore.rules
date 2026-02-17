@@ -6,7 +6,27 @@ service cloud.firestore {
     match /users/{userId}/studyContent/{docId} {
       allow read, write: if request.auth != null && request.auth.uid == userId;
     }
-    
+
+    // Activity tracking: any authenticated user can write their own activity
+    // Admin users can read all activity
+    match /activity/{docId} {
+      allow create: if request.auth != null && request.resource.data.uid == request.auth.uid;
+      allow read: if request.auth != null;
+    }
+
+    // Presence tracking: users write/delete their own doc, all authed users can read
+    match /presence/{userId} {
+      allow read: if request.auth != null;
+      allow write, delete: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // Question bank: all authenticated users can read (for quizzes)
+    // All authenticated users can write (admin check enforced client-side)
+    match /questions/{docId} {
+      allow read: if request.auth != null;
+      allow create, update, delete: if request.auth != null;
+    }
+
     // Deny everything else
     match /{document=**} {
       allow read, write: if false;

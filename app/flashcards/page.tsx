@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import Link from 'next/link';
-import { ArrowLeft, ChevronRight, RotateCcw } from 'lucide-react';
+import { ChevronRight, RotateCcw } from 'lucide-react';
 import { FLASHCARDS, type Flashcard } from '@/data/flashcards';
 
 const STORAGE_KEY = 'safe-prep-flashcard-progress';
@@ -104,8 +104,7 @@ export default function FlashcardsPage() {
                 href="/"
                 className="px-6 py-3 bg-white text-gray-700 rounded-xl font-semibold border border-gray-200 hover:bg-gray-50 transition-colors inline-flex items-center gap-2"
               >
-                <ArrowLeft className="w-4 h-4" />
-                Back to Home
+                Home
               </Link>
             </div>
           </motion.div>
@@ -116,15 +115,12 @@ export default function FlashcardsPage() {
 
   return (
     <main className="min-h-screen bg-gradient-to-br from-indigo-50 to-blue-50 text-gray-900">
-      <header className="p-6 flex justify-between items-center max-w-3xl mx-auto">
-        <Link href="/" className="inline-flex items-center gap-2 text-indigo-600 hover:text-indigo-700">
-          <ArrowLeft className="w-5 h-5" />
-          Back
-        </Link>
+      <div className="p-4 flex justify-between items-center max-w-3xl mx-auto">
+        <h1 className="text-lg font-bold text-indigo-700">Smart Flashcards</h1>
         <span className="text-sm font-medium text-gray-500">
           Card {currentIndex + 1} of {cards.length}
         </span>
-      </header>
+      </div>
 
       <div className="max-w-xl mx-auto px-6 py-8">
         <div

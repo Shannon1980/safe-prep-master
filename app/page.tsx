@@ -1,76 +1,17 @@
 'use client';
 
-import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import Link from 'next/link';
-import { BookOpen, Brain, MessageSquare, Zap, Upload, Target, GraduationCap } from 'lucide-react';
-import { signInWithPopup, onAuthStateChanged, type User } from 'firebase/auth';
-import { getFirebaseAuth, GoogleAuthProvider, hasFirebaseConfig } from '@/app/lib/firebase';
-
-const auth = getFirebaseAuth();
-const hasConfig = hasFirebaseConfig;
+import { BookOpen, Brain, Zap, Upload, Target, GraduationCap } from 'lucide-react';
+import { useAuth } from '@/app/context/AuthContext';
 
 export default function Home() {
-  const [user, setUser] = useState<User | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    if (!auth) {
-      setLoading(false);
-      return;
-    }
-    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
-      setUser(currentUser);
-      setLoading(false);
-    });
-    return () => unsubscribe();
-  }, []);
-
-  const handleLogin = async () => {
-    if (!auth) return alert('Firebase not configured. Add API keys to .env.local');
-    const provider = new GoogleAuthProvider();
-    try {
-      await signInWithPopup(auth, provider);
-    } catch (error) {
-      console.error('Login failed:', error);
-    }
-  };
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-screen bg-indigo-50">
-        <div className="animate-pulse text-gray-500">Loading...</div>
-      </div>
-    );
-  }
+  const { user, isConfigured } = useAuth();
 
   return (
     <main className="min-h-screen bg-gradient-to-br from-indigo-50 to-blue-50 text-gray-900 font-sans">
-      <header className="p-6 flex justify-between items-center max-w-7xl mx-auto">
-        <h1 className="text-2xl font-bold text-indigo-700 flex items-center gap-2">
-          <Brain className="w-8 h-8" />
-          SAFe Prep Master
-        </h1>
-        <nav className="flex gap-4">
-          {user ? (
-            <div className="flex items-center gap-3">
-              <span className="text-sm font-medium text-gray-600">Hi, {user.displayName?.split(' ')[0]}</span>
-              <button onClick={() => auth?.signOut()} className="px-4 py-2 text-indigo-600 hover:bg-indigo-50 rounded-lg">
-                Logout
-              </button>
-            </div>
-          ) : hasConfig ? (
-            <button onClick={handleLogin} className="px-4 py-2 text-indigo-600 hover:bg-indigo-50 rounded-lg">
-              Login
-            </button>
-          ) : null}
-          <Link href="/quiz" className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">
-            Start Studying
-          </Link>
-        </nav>
-      </header>
-
-      <section className="max-w-4xl mx-auto mt-20 text-center px-4">
+      {/* ── Hero ── */}
+      <section className="max-w-4xl mx-auto mt-16 text-center px-4">
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -84,12 +25,13 @@ export default function Home() {
             Adaptive quizzes, smart flashcards, and instant explanations.
           </p>
 
-          {!user && hasConfig && (
+          {!user && isConfigured && (
             <div className="bg-yellow-50 border border-yellow-200 p-4 rounded-xl mb-10 text-yellow-800 text-sm inline-block">
-              Login with Google to save your progress.
+              Sign in with Google to save your progress across devices.
             </div>
           )}
 
+          {/* 3 Primary CTAs */}
           <div className="flex justify-center gap-4 flex-wrap">
             <Link
               href="/exam"
@@ -112,31 +54,11 @@ export default function Home() {
               <Zap className="w-5 h-5" />
               Practice Quiz
             </Link>
-            <Link
-              href="/coach"
-              className="px-8 py-4 bg-white text-gray-700 text-lg font-semibold rounded-xl shadow-sm border border-gray-200 hover:bg-gray-50 transition-all flex items-center gap-2"
-            >
-              <MessageSquare className="w-5 h-5" />
-              Ask the AI Coach
-            </Link>
-            <Link
-              href="/flashcards"
-              className="px-8 py-4 bg-white text-gray-700 text-lg font-semibold rounded-xl shadow-sm border border-gray-200 hover:bg-gray-50 transition-all flex items-center gap-2"
-            >
-              <BookOpen className="w-5 h-5" />
-              Smart Flashcards
-            </Link>
-            <Link
-              href="/upload"
-              className="px-8 py-4 bg-white text-gray-700 text-lg font-semibold rounded-xl shadow-sm border border-gray-200 hover:bg-gray-50 transition-all flex items-center gap-2"
-            >
-              <Upload className="w-5 h-5" />
-              Upload Materials
-            </Link>
           </div>
         </motion.div>
 
-        <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-8 mt-24 text-left">
+        {/* ── Feature Cards ── */}
+        <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-8 mt-24 text-left pb-20">
           <Link href="/exam">
             <FeatureCard
               icon={<Target className="w-8 h-8 text-indigo-500" />}
@@ -165,13 +87,6 @@ export default function Home() {
               desc="Review 55 key terms across all lessons with spaced repetition."
             />
           </Link>
-          <Link href="/coach">
-            <FeatureCard
-              icon={<Brain className="w-8 h-8 text-purple-500" />}
-              title="AI Coach"
-              desc="Ask anything about SAFe 6.0 — get instant, context-aware explanations."
-            />
-          </Link>
           <Link href="/upload">
             <FeatureCard
               icon={<Upload className="w-8 h-8 text-green-500" />}
@@ -179,6 +94,13 @@ export default function Home() {
               desc="Upload study notes to power custom AI quizzes and coaching."
             />
           </Link>
+          <div className="bg-gradient-to-br from-indigo-50 to-purple-50 p-6 rounded-2xl border border-indigo-100 h-full flex flex-col justify-center items-center text-center">
+            <Brain className="w-10 h-10 text-purple-500 mb-3" />
+            <h3 className="text-xl font-bold mb-2">AI Coach</h3>
+            <p className="text-gray-600 text-sm">
+              Always available — click the chat bubble in the bottom-right corner to ask anything about SAFe 6.0.
+            </p>
+          </div>
         </div>
       </section>
     </main>
