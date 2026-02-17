@@ -346,12 +346,20 @@ export default function AdminPage() {
                               alt={u.displayName}
                               className="w-10 h-10 rounded-full"
                               referrerPolicy="no-referrer"
+                              onError={(e) => {
+                                const el = e.target as HTMLImageElement;
+                                el.style.display = 'none';
+                                const fallback = el.nextElementSibling as HTMLElement;
+                                if (fallback) fallback.style.display = 'flex';
+                              }}
                             />
-                          ) : (
-                            <div className="w-10 h-10 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center font-semibold text-sm">
-                              {(u.displayName || u.email || '?')[0].toUpperCase()}
-                            </div>
-                          )}
+                          ) : null}
+                          <div
+                            className="w-10 h-10 rounded-full bg-indigo-100 text-indigo-600 items-center justify-center font-semibold text-sm"
+                            style={{ display: u.photoURL ? 'none' : 'flex' }}
+                          >
+                            {(u.displayName || u.email || '?')[0].toUpperCase()}
+                          </div>
                           <span className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 rounded-full border-2 border-white" />
                         </div>
 

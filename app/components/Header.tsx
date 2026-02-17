@@ -102,14 +102,26 @@ export default function Header() {
             <>
               {user ? (
                 <div className="flex items-center gap-2">
-                  {user.photoURL && (
+                  {user.photoURL ? (
                     <img
                       src={user.photoURL}
                       alt=""
                       className="w-7 h-7 rounded-full border border-gray-200"
                       referrerPolicy="no-referrer"
+                      onError={(e) => {
+                        const el = e.target as HTMLImageElement;
+                        el.style.display = 'none';
+                        const fallback = el.nextElementSibling as HTMLElement;
+                        if (fallback) fallback.style.display = 'flex';
+                      }}
                     />
-                  )}
+                  ) : null}
+                  <div
+                    className="w-7 h-7 rounded-full bg-indigo-100 text-indigo-600 items-center justify-center text-xs font-bold border border-gray-200"
+                    style={{ display: user.photoURL ? 'none' : 'flex' }}
+                  >
+                    {(user.displayName || user.email || '?')[0].toUpperCase()}
+                  </div>
                   <span className="text-sm font-medium text-gray-600 hidden sm:inline">
                     {user.displayName?.split(' ')[0]}
                   </span>
