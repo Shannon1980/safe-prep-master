@@ -3,7 +3,8 @@
 import { useState, useRef, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import Link from 'next/link';
-import { ArrowLeft, Send, Loader2, Bot, User } from 'lucide-react';
+import { ArrowLeft, Send, Loader2, Bot, User, BookOpen } from 'lucide-react';
+import { getAllStudyContent } from '@/app/lib/study-content';
 
 interface Message {
   role: 'user' | 'assistant';
@@ -19,11 +20,20 @@ export default function CoachPage() {
   ]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
+  const [studyContext, setStudyContext] = useState('');
+  const [hasContent, setHasContent] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  useEffect(() => {
+    getAllStudyContent().then((content) => {
+      setStudyContext(content);
+      setHasContent(!!content.trim());
+    });
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -38,7 +48,7 @@ export default function CoachPage() {
       const res = await fetch('/api/coach', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: trimmed }),
+        body: JSON.stringify({ message: trimmed, context: studyContext }),
       });
       const data = await res.json();
       setMessages((m) => [...m, { role: 'assistant', content: data.reply || 'No response.' }]);
@@ -64,9 +74,21 @@ export default function CoachPage() {
             <Bot className="w-5 h-5" />
             AI Coach
           </h1>
-          <div className="w-20" />
+          <Link href="/upload" className="inline-flex items-center gap-1.5 text-sm text-indigo-600 hover:text-indigo-700">
+            <BookOpen className="w-4 h-4" />
+            {hasContent ? 'Materials' : 'Upload'}
+          </Link>
         </div>
       </header>
+
+      {hasContent && (
+        <div className="max-w-3xl mx-auto px-4 pt-2">
+          <div className="bg-indigo-50 border border-indigo-100 rounded-lg px-3 py-2 text-xs text-indigo-700 flex items-center gap-2">
+            <BookOpen className="w-3.5 h-3.5" />
+            Using your uploaded study materials as context
+          </div>
+        </div>
+      )}
 
       <div className="flex-1 overflow-y-auto max-w-3xl w-full mx-auto px-4 py-6">
         <div className="space-y-6">

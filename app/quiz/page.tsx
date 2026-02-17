@@ -1,12 +1,17 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import Link from 'next/link';
-import { ArrowLeft, Check, X, Sparkles, Loader2 } from 'lucide-react';
-import { QUIZ_QUESTIONS } from '@/data/quiz-questions';
+import { ArrowLeft, Check, X, Sparkles, Loader2, Upload, BookOpen } from 'lucide-react';
+import { QUIZ_QUESTIONS, type QuizQuestion } from '@/data/quiz-questions';
+import { getAllStudyContent } from '@/app/lib/study-content';
+
+type QuizMode = 'select' | 'builtin' | 'custom' | 'loading-custom';
 
 export default function QuizPage() {
+  const [mode, setMode] = useState<QuizMode>('select');
+  const [questions, setQuestions] = useState<QuizQuestion[]>(QUIZ_QUESTIONS);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [selectedAnswer, setSelectedAnswer] = useState<number | null>(null);
   const [showResult, setShowResult] = useState(false);
@@ -15,9 +20,63 @@ export default function QuizPage() {
   const [showExplanation, setShowExplanation] = useState(false);
   const [explanation, setExplanation] = useState('');
   const [loadingExplanation, setLoadingExplanation] = useState(false);
+  const [hasStudyContent, setHasStudyContent] = useState(false);
+  const [generateError, setGenerateError] = useState('');
 
-  const question = QUIZ_QUESTIONS[currentIndex];
-  const isLastQuestion = currentIndex === QUIZ_QUESTIONS.length - 1;
+  useEffect(() => {
+    getAllStudyContent().then((content) => {
+      setHasStudyContent(!!content.trim());
+    });
+  }, []);
+
+  const startBuiltIn = () => {
+    setQuestions(QUIZ_QUESTIONS);
+    setMode('builtin');
+    resetQuiz();
+  };
+
+  const startCustomQuiz = async () => {
+    setMode('loading-custom');
+    setGenerateError('');
+    try {
+      const content = await getAllStudyContent();
+      if (!content.trim()) {
+        setGenerateError('No study materials found. Upload content first.');
+        setMode('select');
+        return;
+      }
+      const res = await fetch('/api/generate-quiz', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content, count: 10 }),
+      });
+      const data = await res.json();
+      if (data.error) {
+        setGenerateError(data.error);
+        setMode('select');
+        return;
+      }
+      setQuestions(data.questions);
+      setMode('custom');
+      resetQuiz();
+    } catch {
+      setGenerateError('Failed to generate quiz. Please try again.');
+      setMode('select');
+    }
+  };
+
+  const resetQuiz = () => {
+    setCurrentIndex(0);
+    setSelectedAnswer(null);
+    setShowResult(false);
+    setScore(0);
+    setAnswered(false);
+    setShowExplanation(false);
+    setExplanation('');
+  };
+
+  const question = questions[currentIndex];
+  const isLastQuestion = currentIndex === questions.length - 1;
 
   const handleSelectAnswer = (index: number) => {
     if (answered) return;
@@ -64,17 +123,102 @@ export default function QuizPage() {
   };
 
   const handleRestart = () => {
-    setCurrentIndex(0);
-    setSelectedAnswer(null);
-    setShowResult(false);
-    setScore(0);
-    setAnswered(false);
-    setShowExplanation(false);
-    setExplanation('');
+    if (mode === 'custom') {
+      startCustomQuiz();
+    } else {
+      resetQuiz();
+    }
   };
 
+  // Mode selection screen
+  if (mode === 'select' || mode === 'loading-custom') {
+    return (
+      <main className="min-h-screen bg-gradient-to-br from-indigo-50 to-blue-50 text-gray-900">
+        <header className="p-6 max-w-3xl mx-auto">
+          <Link href="/" className="inline-flex items-center gap-2 text-indigo-600 hover:text-indigo-700">
+            <ArrowLeft className="w-5 h-5" />
+            Back to Home
+          </Link>
+        </header>
+
+        <div className="max-w-2xl mx-auto px-6 py-8">
+          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
+            <h1 className="text-3xl font-bold mb-2 text-center">Practice Quiz</h1>
+            <p className="text-gray-600 text-center mb-10">Choose your quiz type</p>
+
+            {generateError && (
+              <div className="bg-red-50 border border-red-200 rounded-xl p-4 mb-6 text-sm text-red-700">
+                {generateError}
+              </div>
+            )}
+
+            <div className="grid gap-4">
+              <button
+                onClick={startBuiltIn}
+                disabled={mode === 'loading-custom'}
+                className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 text-left hover:border-indigo-300 hover:shadow-md transition-all disabled:opacity-50"
+              >
+                <div className="flex items-start gap-4">
+                  <div className="w-12 h-12 bg-indigo-50 rounded-xl flex items-center justify-center flex-shrink-0">
+                    <BookOpen className="w-6 h-6 text-indigo-500" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-lg">SAFe Built-in Quiz</h3>
+                    <p className="text-gray-600 text-sm mt-1">
+                      {QUIZ_QUESTIONS.length} curated questions covering SAFe 6.0 Scrum Master fundamentals
+                    </p>
+                  </div>
+                </div>
+              </button>
+
+              <button
+                onClick={startCustomQuiz}
+                disabled={!hasStudyContent || mode === 'loading-custom'}
+                className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 text-left hover:border-indigo-300 hover:shadow-md transition-all disabled:opacity-50 relative"
+              >
+                <div className="flex items-start gap-4">
+                  <div className="w-12 h-12 bg-purple-50 rounded-xl flex items-center justify-center flex-shrink-0">
+                    {mode === 'loading-custom' ? (
+                      <Loader2 className="w-6 h-6 text-purple-500 animate-spin" />
+                    ) : (
+                      <Sparkles className="w-6 h-6 text-purple-500" />
+                    )}
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-lg">
+                      AI-Generated from Your Materials
+                      {mode === 'loading-custom' && (
+                        <span className="text-sm font-normal text-purple-600 ml-2">Generating...</span>
+                      )}
+                    </h3>
+                    <p className="text-gray-600 text-sm mt-1">
+                      {hasStudyContent
+                        ? 'Generate 10 custom questions from your uploaded study materials using AI'
+                        : 'Upload study materials first to generate custom quizzes'}
+                    </p>
+                    {!hasStudyContent && (
+                      <Link
+                        href="/upload"
+                        className="inline-flex items-center gap-1.5 mt-3 text-sm text-indigo-600 hover:text-indigo-700 font-medium"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <Upload className="w-3.5 h-3.5" />
+                        Upload Materials
+                      </Link>
+                    )}
+                  </div>
+                </div>
+              </button>
+            </div>
+          </motion.div>
+        </div>
+      </main>
+    );
+  }
+
+  // Results screen
   if (isLastQuestion && answered) {
-    const percentage = Math.round((score / QUIZ_QUESTIONS.length) * 100);
+    const percentage = Math.round((score / questions.length) * 100);
     return (
       <main className="min-h-screen bg-gradient-to-br from-indigo-50 to-blue-50 text-gray-900">
         <header className="p-6 max-w-3xl mx-auto">
@@ -89,16 +233,25 @@ export default function QuizPage() {
           className="max-w-2xl mx-auto px-6 py-12 text-center"
         >
           <h1 className="text-4xl font-bold mb-4">Quiz Complete!</h1>
-          <p className="text-xl text-gray-600 mb-8">
+          <p className="text-xl text-gray-600 mb-2">
             You got <span className="font-bold text-indigo-600">{score}</span> out of{' '}
-            <span className="font-bold">{QUIZ_QUESTIONS.length}</span> correct ({percentage}%)
+            <span className="font-bold">{questions.length}</span> correct ({percentage}%)
           </p>
+          {mode === 'custom' && (
+            <p className="text-sm text-purple-600 mb-8">Generated from your study materials</p>
+          )}
           <div className="flex gap-4 justify-center flex-wrap">
             <button
               onClick={handleRestart}
               className="px-6 py-3 bg-indigo-600 text-white rounded-xl font-semibold hover:bg-indigo-700 transition-colors"
             >
-              Try Again
+              {mode === 'custom' ? 'Generate New Quiz' : 'Try Again'}
+            </button>
+            <button
+              onClick={() => setMode('select')}
+              className="px-6 py-3 bg-white text-gray-700 rounded-xl font-semibold border border-gray-200 hover:bg-gray-50 transition-colors"
+            >
+              Change Quiz Type
             </button>
             <Link
               href="/"
@@ -112,6 +265,7 @@ export default function QuizPage() {
     );
   }
 
+  // Quiz in progress
   return (
     <main className="min-h-screen bg-gradient-to-br from-indigo-50 to-blue-50 text-gray-900">
       <header className="p-6 flex justify-between items-center max-w-3xl mx-auto">
@@ -120,7 +274,10 @@ export default function QuizPage() {
           Back
         </Link>
         <span className="text-sm font-medium text-gray-500">
-          Question {currentIndex + 1} of {QUIZ_QUESTIONS.length} • Score: {score}
+          Question {currentIndex + 1} of {questions.length} • Score: {score}
+          {mode === 'custom' && (
+            <span className="ml-2 text-purple-600">(AI Generated)</span>
+          )}
         </span>
       </header>
 

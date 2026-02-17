@@ -1,13 +1,27 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { GoogleGenAI } from '@google/genai';
 
-const SYSTEM_PROMPT = `You are a friendly, knowledgeable SAFe (Scaled Agile Framework) coach helping someone prepare for the SAFe 6.0 Scrum Master certification exam. 
+const BASE_SYSTEM_PROMPT = `You are a friendly, knowledgeable SAFe (Scaled Agile Framework) coach helping someone prepare for the SAFe 6.0 Scrum Master certification exam. 
 Answer questions about SAFe concepts, roles (RTE, Scrum Master, Product Owner), events (PI Planning, Iteration, I&A), artifacts (Features, Stories, Enablers), and practices (WSJF, Built-in Quality, etc.).
 Be concise but thorough. Use examples when helpful. If asked something outside SAFe, politely redirect to SAFe topics.`;
 
+function buildSystemPrompt(context?: string): string {
+  if (!context || !context.trim()) return BASE_SYSTEM_PROMPT;
+
+  const trimmedContext = context.length > 30000 ? context.slice(0, 30000) + '\n...(truncated)' : context;
+
+  return `${BASE_SYSTEM_PROMPT}
+
+The user has uploaded the following study materials. Reference them when answering questions and use them to provide more specific, relevant answers:
+
+<study_materials>
+${trimmedContext}
+</study_materials>`;
+}
+
 export async function POST(req: NextRequest) {
   try {
-    const { message } = await req.json();
+    const { message, context } = await req.json();
     if (!message || typeof message !== 'string') {
       return NextResponse.json({ error: 'Message is required' }, { status: 400 });
     }
@@ -26,7 +40,7 @@ export async function POST(req: NextRequest) {
     const response = await ai.models.generateContent({
       model: 'gemini-2.0-flash',
       contents: message,
-      config: { systemInstruction: SYSTEM_PROMPT },
+      config: { systemInstruction: buildSystemPrompt(context) },
     });
 
     const text = response.text ?? 'I could not generate a response. Please try again.';

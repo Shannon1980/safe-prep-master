@@ -3,22 +3,12 @@
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import Link from 'next/link';
-import { BookOpen, Brain, MessageSquare, Zap } from 'lucide-react';
-import { initializeApp, getApps } from 'firebase/app';
-import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, User } from 'firebase/auth';
+import { BookOpen, Brain, MessageSquare, Zap, Upload } from 'lucide-react';
+import { signInWithPopup, onAuthStateChanged, type User } from 'firebase/auth';
+import { getFirebaseAuth, GoogleAuthProvider, hasFirebaseConfig } from '@/app/lib/firebase';
 
-const firebaseConfig = {
-  apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
-  authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
-  projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || 'safe-prep-master',
-  storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
-  appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
-};
-
-const hasConfig = !!process.env.NEXT_PUBLIC_FIREBASE_API_KEY;
-const app = hasConfig && getApps().length === 0 ? initializeApp(firebaseConfig) : getApps().length > 0 ? getApps()[0] : null;
-const auth = app ? getAuth(app) : null;
+const auth = getFirebaseAuth();
+const hasConfig = hasFirebaseConfig;
 
 export default function Home() {
   const [user, setUser] = useState<User | null>(null);
@@ -122,10 +112,17 @@ export default function Home() {
               <BookOpen className="w-5 h-5" />
               Smart Flashcards
             </Link>
+            <Link
+              href="/upload"
+              className="px-8 py-4 bg-white text-gray-700 text-lg font-semibold rounded-xl shadow-sm border border-gray-200 hover:bg-gray-50 transition-all flex items-center gap-2"
+            >
+              <Upload className="w-5 h-5" />
+              Upload Materials
+            </Link>
           </div>
         </motion.div>
 
-        <div className="grid md:grid-cols-3 gap-8 mt-24 text-left">
+        <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-8 mt-24 text-left">
           <Link href="/flashcards">
             <FeatureCard
               icon={<BookOpen className="w-8 h-8 text-blue-500" />}
@@ -145,6 +142,13 @@ export default function Home() {
               icon={<Brain className="w-8 h-8 text-purple-500" />}
               title="AI Explanations"
               desc="Don't just get the answer. Get the 'Why' explained like a friend."
+            />
+          </Link>
+          <Link href="/upload">
+            <FeatureCard
+              icon={<Upload className="w-8 h-8 text-green-500" />}
+              title="Upload Materials"
+              desc="Upload your study notes to power custom AI quizzes and coaching."
             />
           </Link>
         </div>
