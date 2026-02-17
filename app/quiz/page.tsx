@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import Link from 'next/link';
-import { ArrowLeft, Check, X, Sparkles, Loader2, Upload, BookOpen } from 'lucide-react';
+import { ArrowLeft, Check, X, Sparkles, Loader2, Upload, BookOpen, GraduationCap } from 'lucide-react';
 import { QUIZ_QUESTIONS, type QuizQuestion } from '@/data/quiz-questions';
 import { getAllStudyContent } from '@/app/lib/study-content';
 
@@ -153,6 +153,27 @@ export default function QuizPage() {
             )}
 
             <div className="grid gap-4">
+              <Link
+                href="/quiz/lesson"
+                className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 text-left hover:border-indigo-300 hover:shadow-md transition-all block"
+              >
+                <div className="flex items-start gap-4">
+                  <div className="w-12 h-12 bg-emerald-50 rounded-xl flex items-center justify-center flex-shrink-0">
+                    <GraduationCap className="w-6 h-6 text-emerald-500" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-lg">Lesson Quizzes</h3>
+                    <p className="text-gray-600 text-sm mt-1">
+                      Test by lesson with detailed section-by-section results and study recommendations
+                    </p>
+                    <div className="flex items-center gap-2 mt-2">
+                      <span className="text-xs bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full font-medium">6 lessons</span>
+                      <span className="text-xs text-gray-400">Includes all question banks</span>
+                    </div>
+                  </div>
+                </div>
+              </Link>
+
               <button
                 onClick={startBuiltIn}
                 disabled={mode === 'loading-custom'}
@@ -274,7 +295,8 @@ export default function QuizPage() {
           Back
         </Link>
         <span className="text-sm font-medium text-gray-500">
-          Question {currentIndex + 1} of {questions.length} • Score: {score}
+          Question {currentIndex + 1} of {questions.length} • Score: {score}/{currentIndex + (answered ? 1 : 0)}{' '}
+          ({currentIndex + (answered ? 1 : 0) > 0 ? Math.round((score / (currentIndex + (answered ? 1 : 0))) * 100) : 0}%)
           {mode === 'custom' && (
             <span className="ml-2 text-purple-600">(AI Generated)</span>
           )}

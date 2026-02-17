@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import Link from 'next/link';
-import { BookOpen, Brain, MessageSquare, Zap, Upload } from 'lucide-react';
+import { BookOpen, Brain, MessageSquare, Zap, Upload, Target, GraduationCap } from 'lucide-react';
 import { signInWithPopup, onAuthStateChanged, type User } from 'firebase/auth';
 import { getFirebaseAuth, GoogleAuthProvider, hasFirebaseConfig } from '@/app/lib/firebase';
 
@@ -92,11 +92,25 @@ export default function Home() {
 
           <div className="flex justify-center gap-4 flex-wrap">
             <Link
-              href="/quiz"
+              href="/exam"
+              className="px-8 py-4 bg-gradient-to-r from-indigo-600 to-purple-600 text-white text-lg font-semibold rounded-xl shadow-lg hover:shadow-xl hover:from-indigo-700 hover:to-purple-700 transition-all flex items-center gap-2"
+            >
+              <Target className="w-5 h-5" />
+              Simulate Real Exam
+            </Link>
+            <Link
+              href="/quiz/lesson"
               className="px-8 py-4 bg-indigo-600 text-white text-lg font-semibold rounded-xl shadow-lg hover:shadow-xl hover:bg-indigo-700 transition-all flex items-center gap-2"
             >
+              <GraduationCap className="w-5 h-5" />
+              Lesson Quizzes
+            </Link>
+            <Link
+              href="/quiz"
+              className="px-8 py-4 bg-white text-gray-700 text-lg font-semibold rounded-xl shadow-sm border border-gray-200 hover:bg-gray-50 transition-all flex items-center gap-2"
+            >
               <Zap className="w-5 h-5" />
-              Take a Practice Quiz
+              Practice Quiz
             </Link>
             <Link
               href="/coach"
@@ -122,33 +136,47 @@ export default function Home() {
           </div>
         </motion.div>
 
-        <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-8 mt-24 text-left">
-          <Link href="/flashcards">
+        <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-8 mt-24 text-left">
+          <Link href="/exam">
             <FeatureCard
-              icon={<BookOpen className="w-8 h-8 text-blue-500" />}
-              title="Smart Flashcards"
-              desc="Review key terms like RTE, ART, and WSJF with spaced repetition."
+              icon={<Target className="w-8 h-8 text-indigo-500" />}
+              title="Exam Simulation"
+              desc="45 questions, 90 minutes, domain-weighted — just like the real SSM 6.0 exam."
+            />
+          </Link>
+          <Link href="/quiz/lesson">
+            <FeatureCard
+              icon={<GraduationCap className="w-8 h-8 text-emerald-500" />}
+              title="Lesson Quizzes"
+              desc="Study lesson by lesson with section breakdown and targeted study recommendations."
             />
           </Link>
           <Link href="/quiz">
             <FeatureCard
               icon={<Zap className="w-8 h-8 text-yellow-500" />}
-              title="Adaptive Quizzes"
-              desc="Questions get harder as you get better. Focus on your weak spots."
+              title="Practice Quizzes"
+              desc="Quick 10-question quizzes or AI-generated from your uploaded materials."
+            />
+          </Link>
+          <Link href="/flashcards">
+            <FeatureCard
+              icon={<BookOpen className="w-8 h-8 text-blue-500" />}
+              title="Smart Flashcards"
+              desc="Review 55 key terms across all lessons with spaced repetition."
             />
           </Link>
           <Link href="/coach">
             <FeatureCard
               icon={<Brain className="w-8 h-8 text-purple-500" />}
-              title="AI Explanations"
-              desc="Don't just get the answer. Get the 'Why' explained like a friend."
+              title="AI Coach"
+              desc="Ask anything about SAFe 6.0 — get instant, context-aware explanations."
             />
           </Link>
           <Link href="/upload">
             <FeatureCard
               icon={<Upload className="w-8 h-8 text-green-500" />}
               title="Upload Materials"
-              desc="Upload your study notes to power custom AI quizzes and coaching."
+              desc="Upload study notes to power custom AI quizzes and coaching."
             />
           </Link>
         </div>
