@@ -20,6 +20,7 @@ import {
   EyeOff,
   Lightbulb,
   Layers,
+  Flag,
 } from 'lucide-react';
 import {
   LESSONS,
@@ -44,13 +45,19 @@ import {
   type LessonQuizSession,
 } from '@/app/lib/session-storage';
 import { setPresenceDetail, clearPresenceDetail } from '@/app/lib/presence';
+import {
+  QuestionNavigator,
+  BottomNavBar,
+  SubmitConfirmModal,
+  type QuestionNavState,
+} from '@/app/components/quiz-nav';
 
 type Phase = 'select' | 'sections' | 'quiz' | 'results';
 
 interface AnswerState {
   selectedAnswer: number | null;
   selectedAnswers: number[];
-  answered: boolean;
+  flagged: boolean;
 }
 
 interface SectionResult {
@@ -85,21 +92,29 @@ export default function LessonQuizPage() {
   const [questions, setQuestions] = useState<LessonQuizQuestion[]>([]);
   const [answerStates, setAnswerStates] = useState<AnswerState[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
-  const [showExplanation, setShowExplanation] = useState(false);
-  const [explanation, setExplanation] = useState('');
-  const [loadingExplanation, setLoadingExplanation] = useState(false);
   const [showReview, setShowReview] = useState(false);
   const [savedSessionData, setSavedSessionData] = useState<LessonQuizSession | null>(null);
   const [selectedSection, setSelectedSection] = useState<LessonSection | null>(null);
   const [isSectionQuiz, setIsSectionQuiz] = useState(false);
   const [lessonPoolCache, setLessonPoolCache] = useState<Record<number, LessonQuizQuestion[]>>({});
+  const [showNavigator, setShowNavigator] = useState(false);
+  const [showSubmitConfirm, setShowSubmitConfirm] = useState(false);
+
+  // Review explanations
+  const [reviewExplanations, setReviewExplanations] = useState<Record<number, string>>({});
+  const [reviewLoadingIdx, setReviewLoadingIdx] = useState<number | null>(null);
 
   const savedRef = useRef(false);
 
   // Check for saved session on mount
   useEffect(() => {
     const session = loadSession<LessonQuizSession>('lesson_quiz');
-    if (session) setSavedSessionData(session);
+    if (session && session.answerStates?.[0] && 'flagged' in session.answerStates[0]) {
+      setSavedSessionData(session);
+    } else {
+      // Discard old-format sessions that have 'answered' instead of 'flagged'
+      clearSession('lesson_quiz');
+    }
   }, []);
 
   const fetchLessonPool = useCallback(async (lessonId: number): Promise<LessonQuizQuestion[]> => {
@@ -129,11 +144,13 @@ export default function LessonQuizPage() {
     setSelectedSection(null);
     setIsSectionQuiz(false);
     setQuestions(qs);
-    setAnswerStates(qs.map(() => ({ selectedAnswer: null, selectedAnswers: [], answered: false })));
+    setAnswerStates(qs.map(() => ({ selectedAnswer: null, selectedAnswers: [], flagged: false })));
     setCurrentIndex(0);
-    setShowExplanation(false);
-    setExplanation('');
     setShowReview(false);
+    setShowNavigator(false);
+    setShowSubmitConfirm(false);
+    setReviewExplanations({});
+    setReviewLoadingIdx(null);
     savedRef.current = false;
     setPhase('quiz');
     setPresenceDetail(`Lesson ${lesson.id}: ${lesson.shortTitle} (Full)`);
@@ -151,11 +168,13 @@ export default function LessonQuizPage() {
     setSelectedSection(section);
     setIsSectionQuiz(true);
     setQuestions(qs);
-    setAnswerStates(qs.map(() => ({ selectedAnswer: null, selectedAnswers: [], answered: false })));
+    setAnswerStates(qs.map(() => ({ selectedAnswer: null, selectedAnswers: [], flagged: false })));
     setCurrentIndex(0);
-    setShowExplanation(false);
-    setExplanation('');
     setShowReview(false);
+    setShowNavigator(false);
+    setShowSubmitConfirm(false);
+    setReviewExplanations({});
+    setReviewLoadingIdx(null);
     savedRef.current = false;
     setPhase('quiz');
     setPresenceDetail(`Lesson ${lesson.id} — ${section.name}`);
@@ -173,9 +192,11 @@ export default function LessonQuizPage() {
     setQuestions(savedSessionData.questions);
     setAnswerStates(savedSessionData.answerStates);
     setCurrentIndex(savedSessionData.currentIndex);
-    setShowExplanation(false);
-    setExplanation('');
     setShowReview(false);
+    setShowNavigator(false);
+    setShowSubmitConfirm(false);
+    setReviewExplanations({});
+    setReviewLoadingIdx(null);
     savedRef.current = false;
     setSavedSessionData(null);
     clearSession('lesson_quiz');
@@ -183,25 +204,75 @@ export default function LessonQuizPage() {
     if (lesson) setPresenceDetail(`Lesson ${lesson.id}: ${lesson.shortTitle} (Resumed)`);
   }, [savedSessionData]);
 
-  const handleSaveAndExit = useCallback(() => {
-    if (!selectedLesson || questions.length === 0) return;
+  // Auto-save refs
+  const questionsRef = useRef(questions);
+  const statesRef = useRef(answerStates);
+  const indexRef = useRef(currentIndex);
+  const lessonRef = useRef(selectedLesson);
+  questionsRef.current = questions;
+  statesRef.current = answerStates;
+  indexRef.current = currentIndex;
+  lessonRef.current = selectedLesson;
+
+  const saveCurrentSession = useCallback(() => {
+    if (!lessonRef.current || questionsRef.current.length === 0) return;
     saveSession<LessonQuizSession>({
       type: 'lesson_quiz',
-      lessonId: selectedLesson.id,
-      questions,
-      answerStates,
-      currentIndex,
+      lessonId: lessonRef.current.id,
+      questions: questionsRef.current,
+      answerStates: statesRef.current,
+      currentIndex: indexRef.current,
       savedAt: Date.now(),
     });
+  }, []);
+
+  // Auto-save every 30s + on beforeunload
+  useEffect(() => {
+    if (phase !== 'quiz') return;
+    const interval = setInterval(saveCurrentSession, 30_000);
+    const handleUnload = () => saveCurrentSession();
+    window.addEventListener('beforeunload', handleUnload);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('beforeunload', handleUnload);
+    };
+  }, [phase, saveCurrentSession]);
+
+  const handleSaveAndExit = useCallback(() => {
+    saveCurrentSession();
     clearPresenceDetail();
     setPhase('select');
     const session = loadSession<LessonQuizSession>('lesson_quiz');
     if (session) setSavedSessionData(session);
-  }, [selectedLesson, questions, answerStates, currentIndex]);
+  }, [saveCurrentSession]);
+
+  // Navigation
+  const goToQuestion = (index: number) => {
+    setCurrentIndex(index);
+    setShowNavigator(false);
+  };
+  const goNext = () => {
+    if (currentIndex < questions.length - 1) setCurrentIndex((i) => i + 1);
+  };
+  const goPrev = () => {
+    if (currentIndex > 0) setCurrentIndex((i) => i - 1);
+  };
+  const toggleFlag = () => {
+    setAnswerStates((prev) => {
+      const next = [...prev];
+      next[currentIndex] = { ...next[currentIndex], flagged: !next[currentIndex].flagged };
+      return next;
+    });
+  };
+
+  const handleSubmit = () => {
+    setShowSubmitConfirm(false);
+    clearSession('lesson_quiz');
+    setPhase('results');
+  };
 
   const question = questions[currentIndex];
   const currentState = answerStates[currentIndex];
-  const isLastQuestion = currentIndex === questions.length - 1;
 
   const score = useMemo(() => {
     if (phase !== 'results') return 0;
@@ -260,7 +331,6 @@ export default function LessonQuizPage() {
   useEffect(() => {
     if (phase !== 'results' || savedRef.current || !selectedLesson || questions.length === 0) return;
     savedRef.current = true;
-    clearSession('lesson_quiz');
 
     const percentage = Math.round((score / questions.length) * 100);
 
@@ -299,7 +369,6 @@ export default function LessonQuizPage() {
   }, [phase, score, questions, selectedLesson, sectionResults]);
 
   const handleSelect = (index: number) => {
-    if (currentState.answered) return;
     const q = question;
     setAnswerStates((prev) => {
       const next = [...prev];
@@ -319,44 +388,37 @@ export default function LessonQuizPage() {
     });
   };
 
-  const handleConfirm = () => {
-    setAnswerStates((prev) => {
-      const next = [...prev];
-      next[currentIndex] = { ...next[currentIndex], answered: true };
-      return next;
-    });
-    setShowExplanation(false);
-    setExplanation('');
-  };
-
-  const handleNext = () => {
-    setShowExplanation(false);
-    setExplanation('');
-    if (isLastQuestion) {
-      setPhase('results');
-    } else {
-      setCurrentIndex((i) => i + 1);
-    }
-  };
-
-  const handleGetExplanation = async () => {
-    setLoadingExplanation(true);
+  // AI Explanation for review
+  const handleGetReviewExplanation = async (qIdx: number) => {
+    if (reviewExplanations[qIdx] !== undefined) return;
+    setReviewLoadingIdx(qIdx);
     try {
+      const q = questions[qIdx];
       const result = await explainQuestion(
-        question.question,
-        question.options,
-        question.correctIndex,
-        currentState.selectedAnswer
+        q.question,
+        q.options,
+        q.correctIndex,
+        answerStates[qIdx].selectedAnswer
       );
-      setExplanation(result);
-      setShowExplanation(true);
+      setReviewExplanations((prev) => ({ ...prev, [qIdx]: result }));
     } catch {
-      setExplanation('Unable to generate explanation. Please try again.');
-      setShowExplanation(true);
+      setReviewExplanations((prev) => ({ ...prev, [qIdx]: 'Unable to generate explanation. Please try again.' }));
     } finally {
-      setLoadingExplanation(false);
+      setReviewLoadingIdx(null);
     }
   };
+
+  // Computed
+  const answeredCount = answerStates.filter((s) => s.selectedAnswers.length > 0).length;
+  const flaggedCount = answerStates.filter((s) => s.flagged).length;
+  const unansweredCount = questions.length - answeredCount;
+
+  // Update presence when navigating
+  useEffect(() => {
+    if (phase === 'quiz' && questions.length > 0) {
+      setPresenceDetail(`Q${currentIndex + 1}/${questions.length} (${answeredCount} answered)`);
+    }
+  }, [phase, currentIndex, questions.length, answeredCount]);
 
   // ── LESSON SELECTION ──
   if (phase === 'select') {
@@ -377,7 +439,7 @@ export default function LessonQuizPage() {
                 </div>
                 <p className="text-sm text-indigo-600 mb-3">
                   Lesson {savedSessionData.lessonId} &bull;{' '}
-                  {savedSessionData.answerStates.filter(s => s.answered).length}/{savedSessionData.questions.length} answered &bull;{' '}
+                  {savedSessionData.answerStates.filter(s => s.selectedAnswers.length > 0).length}/{savedSessionData.questions.length} answered &bull;{' '}
                   Question {savedSessionData.currentIndex + 1}
                 </p>
                 <div className="flex gap-3">
@@ -659,9 +721,12 @@ export default function LessonQuizPage() {
                             {section.sectionName} — {section.correct}/{section.total}
                           </h3>
                           <div className="space-y-3 mb-6">
-                            {section.questions.map(({ question: q, answer, isCorrect: correct }) => {
+                            {section.questions.map(({ question: q, answer, isCorrect: correct }, qRelIdx) => {
                               const correctSet = new Set(q.correctIndices ?? [q.correctIndex]);
                               const selectedSet = new Set(answer.selectedAnswers);
+                              // Find global index for this question
+                              const globalIdx = questions.findIndex(gq => gq.id === q.id);
+                              const hasExplanation = reviewExplanations[globalIdx] !== undefined;
                               return (
                                 <div
                                   key={q.id}
@@ -698,6 +763,41 @@ export default function LessonQuizPage() {
                                       );
                                     })}
                                   </div>
+                                  {/* AI Explanation */}
+                                  {globalIdx >= 0 && (
+                                    <div className="ml-6 mt-2">
+                                      {!hasExplanation && (
+                                        <button
+                                          onClick={() => handleGetReviewExplanation(globalIdx)}
+                                          disabled={reviewLoadingIdx === globalIdx}
+                                          className="flex items-center gap-2 px-3 py-1.5 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors text-xs disabled:opacity-50"
+                                        >
+                                          {reviewLoadingIdx === globalIdx ? (
+                                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                          ) : (
+                                            <Sparkles className="w-3.5 h-3.5" />
+                                          )}
+                                          {reviewLoadingIdx === globalIdx ? 'Getting explanation...' : 'Explain with AI'}
+                                        </button>
+                                      )}
+                                      {hasExplanation && (
+                                        <div className="mt-1 p-3 bg-indigo-50 rounded-lg border border-indigo-100">
+                                          <p className="text-xs font-medium text-indigo-800 mb-1">AI Explanation</p>
+                                          <div className="text-gray-700 text-xs whitespace-pre-wrap">
+                                            {parseExplanation(reviewExplanations[globalIdx]).segments.map((seg, si) =>
+                                              seg.type === 'bold' ? (
+                                                <strong key={si} className="font-semibold text-gray-900">{seg.value}</strong>
+                                              ) : seg.type === 'link' ? (
+                                                <a key={si} href={seg.href} target="_blank" rel="noopener noreferrer" className="text-indigo-600 underline hover:text-indigo-800 break-all">{seg.value}</a>
+                                              ) : (
+                                                <span key={si}>{seg.value}</span>
+                                              )
+                                            )}
+                                          </div>
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
                                 </div>
                               );
                             })}
@@ -747,79 +847,105 @@ export default function LessonQuizPage() {
   // ── QUIZ IN PROGRESS ──
   if (!question || !currentState) return null;
 
-  const answered = currentState.answered;
-  const isCorrect = answered ? isAnswerCorrect(question, currentState) : false;
-  const answeredCount = answerStates.filter((s) => s.answered).length;
-  const hasSelection = question.multiSelect
-    ? currentState.selectedAnswers.length === question.multiSelect
-    : currentState.selectedAnswer !== null;
-
   return (
-    <main className="min-h-screen bg-gradient-to-br from-indigo-50 to-blue-50 text-gray-900">
-      <div className="p-4 flex justify-between items-center max-w-3xl mx-auto">
-        <button
-          onClick={handleSaveAndExit}
-          className="inline-flex items-center gap-2 text-indigo-600 hover:text-indigo-700 text-sm font-medium"
-        >
-          <ChevronLeft className="w-4 h-4" />
-          Save &amp; Exit
-        </button>
-        <span className="text-sm font-medium text-gray-500">
-          {currentIndex + 1} of {questions.length} &bull; Score:{' '}
-          {(() => {
-            const correct = answerStates.reduce((acc, s, i) => acc + (s.answered && isAnswerCorrect(questions[i], s) ? 1 : 0), 0);
-            const pct = answeredCount > 0 ? Math.round((correct / answeredCount) * 100) : 0;
-            return `${correct}/${answeredCount} (${pct}%)`;
-          })()}
-        </span>
-      </div>
-
-      {/* Progress bar */}
-      <div className="max-w-3xl mx-auto px-6 mb-4">
-        <div className="flex items-center gap-3 mb-1">
+    <main className="min-h-screen bg-gradient-to-br from-indigo-50 to-blue-50 text-gray-900 flex flex-col">
+      {/* Top Bar */}
+      <header className="bg-white/80 backdrop-blur border-b border-gray-200 px-4 py-3 sticky top-0 z-20">
+        <div className="max-w-3xl mx-auto flex items-center justify-between">
+          <span className="text-sm text-gray-500">
+            {answeredCount}/{questions.length} answered
+            {flaggedCount > 0 && (
+              <span className="ml-2 text-amber-500 inline-flex items-center gap-1">
+                <Flag className="w-3.5 h-3.5" /> {flaggedCount}
+              </span>
+            )}
+          </span>
           <span className="text-xs font-medium text-indigo-600">
             {isSectionQuiz && selectedSection
               ? `Lesson ${selectedLesson?.id} — ${selectedSection.name}`
               : `Lesson ${selectedLesson?.id}: ${selectedLesson?.shortTitle}`}
           </span>
-          <span className="text-xs text-gray-400">
-            {Math.round(((currentIndex + 1) / questions.length) * 100)}%
-          </span>
+          <button
+            onClick={() => setShowNavigator(!showNavigator)}
+            className="px-3 py-1.5 bg-gray-100 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-200 transition-colors"
+          >
+            Q {currentIndex + 1}/{questions.length}
+          </button>
         </div>
-        <div className="h-1.5 bg-gray-200 rounded-full overflow-hidden">
-          <div
-            className="h-full bg-indigo-500 rounded-full transition-all duration-300"
-            style={{ width: `${((currentIndex + 1) / questions.length) * 100}%` }}
-          />
+        {/* Progress Bar */}
+        <div className="max-w-3xl mx-auto mt-2">
+          <div className="h-1.5 bg-gray-200 rounded-full overflow-hidden">
+            <div
+              className="h-full bg-indigo-500 rounded-full transition-all duration-300"
+              style={{ width: `${(answeredCount / questions.length) * 100}%` }}
+            />
+          </div>
         </div>
-      </div>
+      </header>
 
-      <div className="max-w-2xl mx-auto px-6">
+      {/* Question Navigator */}
+      <QuestionNavigator
+        open={showNavigator}
+        totalQuestions={questions.length}
+        questionStates={answerStates}
+        currentIndex={currentIndex}
+        onGoToQuestion={goToQuestion}
+        onClose={() => setShowNavigator(false)}
+      />
+
+      {/* Submit Confirm */}
+      <SubmitConfirmModal
+        open={showSubmitConfirm}
+        unansweredCount={unansweredCount}
+        flaggedCount={flaggedCount}
+        onCancel={() => setShowSubmitConfirm(false)}
+        onConfirm={handleSubmit}
+        label="Submit Quiz"
+      />
+
+      {/* Question Content */}
+      <div className="flex-1 max-w-2xl w-full mx-auto px-6 py-8">
         <AnimatePresence mode="wait">
           <motion.div
             key={currentIndex}
             initial={{ opacity: 0, x: 20 }}
             animate={{ opacity: 1, x: 0 }}
             exit={{ opacity: 0, x: -20 }}
-            transition={{ duration: 0.2 }}
+            transition={{ duration: 0.15 }}
           >
-            {/* Section badge */}
-            <div className="mb-4 flex items-center gap-2">
-              <span className="text-xs font-medium text-indigo-600 bg-indigo-100 px-2.5 py-1 rounded-full">
-                {selectedLesson?.sections.find((s) => s.id === question.section)?.name || question.section}
-              </span>
-              {question.multiSelect && (
-                <span className="text-xs font-medium text-purple-600 bg-purple-100 px-2.5 py-1 rounded-full">
-                  Select {question.multiSelect}
+            {/* Section badge + flag */}
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-medium text-indigo-600 bg-indigo-100 px-2.5 py-1 rounded-full">
+                  {selectedLesson?.sections.find((s) => s.id === question.section)?.name || question.section}
                 </span>
-              )}
+                {question.multiSelect && (
+                  <span className="text-xs font-medium text-purple-600 bg-purple-100 px-2.5 py-1 rounded-full">
+                    Select {question.multiSelect}
+                  </span>
+                )}
+              </div>
+              <button
+                onClick={toggleFlag}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm transition-colors ${
+                  currentState.flagged
+                    ? 'bg-amber-400 text-amber-900'
+                    : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+                }`}
+              >
+                <Flag className="w-4 h-4" />
+                {currentState.flagged ? 'Flagged' : 'Flag'}
+              </button>
             </div>
 
             {/* Question */}
-            <h2 className="text-xl font-bold mb-6 leading-relaxed">{question.question}</h2>
+            <h2 className="text-xl font-bold mb-6 leading-relaxed">
+              <span className="text-indigo-500 mr-2">{currentIndex + 1}.</span>
+              {question.question}
+            </h2>
 
             {/* Multi-select counter */}
-            {question.multiSelect && !answered && (
+            {question.multiSelect && (
               <p className="text-sm text-indigo-500 mb-4">
                 {currentState.selectedAnswers.length}/{question.multiSelect} selected
               </p>
@@ -831,43 +957,39 @@ export default function LessonQuizPage() {
                 const isSelected = question.multiSelect
                   ? currentState.selectedAnswers.includes(oi)
                   : currentState.selectedAnswer === oi;
-                const correctSet = new Set(question.correctIndices ?? [question.correctIndex]);
-                const isCorrectOpt = correctSet.has(oi);
-                const showCorrectHighlight = answered && isCorrectOpt;
-                const showWrongHighlight = answered && isSelected && !isCorrectOpt;
                 const isMaxed =
-                  !answered &&
                   question.multiSelect
                     ? currentState.selectedAnswers.length >= question.multiSelect && !isSelected
                     : false;
+                const letter = String.fromCharCode(65 + oi);
 
                 return (
                   <button
                     key={oi}
                     onClick={() => handleSelect(oi)}
-                    disabled={answered || isMaxed}
+                    disabled={isMaxed}
                     className={`w-full text-left p-4 rounded-xl border-2 transition-all ${
-                      showCorrectHighlight
-                        ? 'border-green-500 bg-green-50'
-                        : showWrongHighlight
-                          ? 'border-red-500 bg-red-50'
-                          : isSelected && !answered
-                            ? 'border-indigo-500 bg-indigo-50'
-                            : isMaxed
-                              ? 'border-gray-100 bg-gray-50 opacity-50 cursor-not-allowed'
-                              : 'border-gray-200 bg-white hover:border-indigo-300 hover:bg-indigo-50/50'
-                    } ${answered ? 'cursor-default' : 'cursor-pointer'}`}
+                      isSelected
+                        ? 'border-indigo-500 bg-indigo-50'
+                        : isMaxed
+                          ? 'border-gray-100 bg-gray-50 opacity-50 cursor-not-allowed'
+                          : 'border-gray-200 bg-white hover:border-indigo-300 hover:bg-indigo-50/50'
+                    }`}
                   >
                     <span className="flex items-center gap-3">
-                      {showCorrectHighlight && <Check className="w-5 h-5 text-green-600 flex-shrink-0" />}
-                      {showWrongHighlight && <X className="w-5 h-5 text-red-600 flex-shrink-0" />}
-                      {question.multiSelect && !answered && (
+                      {question.multiSelect ? (
                         <span
-                          className={`w-5 h-5 rounded-md border-2 flex items-center justify-center text-xs flex-shrink-0 ${
-                            isSelected ? 'bg-indigo-500 border-indigo-500 text-white' : 'border-gray-300'
+                          className={`w-8 h-8 rounded-md flex items-center justify-center text-sm font-bold flex-shrink-0 border-2 ${
+                            isSelected ? 'bg-indigo-500 border-indigo-500 text-white' : 'bg-transparent border-gray-300 text-gray-500'
                           }`}
                         >
-                          {isSelected ? '✓' : ''}
+                          {isSelected ? '✓' : letter}
+                        </span>
+                      ) : (
+                        <span className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0 ${
+                          isSelected ? 'bg-indigo-500 text-white' : 'bg-gray-100 text-gray-500'
+                        }`}>
+                          {letter}
                         </span>
                       )}
                       <span className="text-sm">{option}</span>
@@ -876,74 +998,19 @@ export default function LessonQuizPage() {
                 );
               })}
             </div>
-
-            {/* Confirm / Feedback / Next */}
-            {!answered && hasSelection && (
-              <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="mt-6">
-                <button
-                  onClick={handleConfirm}
-                  className="w-full py-3 bg-indigo-600 text-white rounded-xl font-semibold hover:bg-indigo-700 transition-colors"
-                >
-                  Confirm Answer
-                </button>
-              </motion.div>
-            )}
-
-            {answered && (
-              <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="mt-6">
-                <div
-                  className={`p-3 rounded-xl text-sm font-medium mb-4 ${
-                    isCorrect ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
-                  }`}
-                >
-                  {isCorrect ? 'Correct!' : 'Incorrect — see the correct answer highlighted in green above.'}
-                </div>
-
-                <button
-                  onClick={handleGetExplanation}
-                  disabled={loadingExplanation}
-                  className="flex items-center gap-2 px-4 py-2 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors disabled:opacity-50"
-                >
-                  {loadingExplanation ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <Sparkles className="w-4 h-4" />
-                  )}
-                  {loadingExplanation ? 'Getting AI explanation...' : 'Explain with AI'}
-                </button>
-
-                {showExplanation && (
-                  <motion.div
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    className="mt-4 p-4 bg-indigo-50 rounded-xl border border-indigo-100"
-                  >
-                    <p className="text-sm font-medium text-indigo-800 mb-2">AI Explanation</p>
-                    <div className="text-gray-700 text-sm whitespace-pre-wrap">
-                      {parseExplanation(explanation).segments.map((seg, si) =>
-                        seg.type === 'bold' ? (
-                          <strong key={si} className="font-semibold text-gray-900">{seg.value}</strong>
-                        ) : seg.type === 'link' ? (
-                          <a key={si} href={seg.href} target="_blank" rel="noopener noreferrer" className="text-indigo-600 underline hover:text-indigo-800 break-all">{seg.value}</a>
-                        ) : (
-                          <span key={si}>{seg.value}</span>
-                        )
-                      )}
-                    </div>
-                  </motion.div>
-                )}
-
-                <button
-                  onClick={handleNext}
-                  className="mt-4 w-full py-3 bg-indigo-600 text-white rounded-xl font-semibold hover:bg-indigo-700 transition-colors"
-                >
-                  {isLastQuestion ? 'See Results' : 'Next Question'}
-                </button>
-              </motion.div>
-            )}
           </motion.div>
         </AnimatePresence>
       </div>
+
+      {/* Bottom Navigation */}
+      <BottomNavBar
+        currentIndex={currentIndex}
+        totalQuestions={questions.length}
+        onPrev={goPrev}
+        onNext={goNext}
+        onSubmit={() => setShowSubmitConfirm(true)}
+        onSaveAndExit={handleSaveAndExit}
+      />
     </main>
   );
 }

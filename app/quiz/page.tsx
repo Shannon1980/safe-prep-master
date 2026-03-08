@@ -1,9 +1,22 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import Link from 'next/link';
-import { Check, X, Sparkles, Loader2, Upload, BookOpen, GraduationCap, ChevronLeft } from 'lucide-react';
+import {
+  Check,
+  X,
+  Sparkles,
+  Loader2,
+  Upload,
+  BookOpen,
+  GraduationCap,
+  ChevronLeft,
+  Flag,
+  CheckCircle,
+  XCircle,
+  RotateCcw,
+} from 'lucide-react';
 import { QUIZ_QUESTIONS, type QuizQuestion } from '@/data/quiz-questions';
 import { getAllStudyContent } from '@/app/lib/study-content';
 import { explainQuestion, generateQuizFromContent, parseExplanation } from '@/app/lib/gemini';
@@ -16,195 +29,253 @@ import {
   type PracticeQuizSession,
 } from '@/app/lib/session-storage';
 import { setPresenceDetail } from '@/app/lib/presence';
+import {
+  QuestionNavigator,
+  BottomNavBar,
+  SubmitConfirmModal,
+  type QuestionNavState,
+} from '@/app/components/quiz-nav';
 
-type QuizMode = 'select' | 'builtin' | 'custom' | 'loading-custom';
+type Phase = 'select' | 'loading-custom' | 'quiz' | 'results' | 'review';
 
 export default function QuizPage() {
-  const [mode, setMode] = useState<QuizMode>('select');
+  const [phase, setPhase] = useState<Phase>('select');
+  const [quizSource, setQuizSource] = useState<'builtin' | 'custom'>('builtin');
   const [questions, setQuestions] = useState<QuizQuestion[]>(QUIZ_QUESTIONS);
+  const [questionStates, setQuestionStates] = useState<QuestionNavState[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
-  const [selectedAnswer, setSelectedAnswer] = useState<number | null>(null);
-  const [showResult, setShowResult] = useState(false);
-  const [score, setScore] = useState(0);
-  const [answered, setAnswered] = useState(false);
-  const [showExplanation, setShowExplanation] = useState(false);
-  const [explanation, setExplanation] = useState('');
-  const [loadingExplanation, setLoadingExplanation] = useState(false);
+  const [showNavigator, setShowNavigator] = useState(false);
+  const [showSubmitConfirm, setShowSubmitConfirm] = useState(false);
   const [hasStudyContent, setHasStudyContent] = useState(false);
   const [generateError, setGenerateError] = useState('');
   const [savedSessionData, setSavedSessionData] = useState<PracticeQuizSession | null>(null);
   const savedRef = useRef(false);
-  const missedRef = useRef<QuestionResult[]>([]);
+
+  // Review screen state
+  const [reviewExplanations, setReviewExplanations] = useState<Record<number, string>>({});
+  const [reviewLoadingIdx, setReviewLoadingIdx] = useState<number | null>(null);
 
   useEffect(() => {
     getAllStudyContent().then((content) => {
       setHasStudyContent(!!content.trim());
     });
     const session = loadSession<PracticeQuizSession>('practice_quiz');
-    if (session) setSavedSessionData(session);
+    if (session && session.questionStates) {
+      setSavedSessionData(session);
+    } else {
+      // Discard old-format sessions
+      clearSession('practice_quiz');
+    }
   }, []);
+
+  const initQuiz = (qs: QuizQuestion[]) => {
+    setQuestions(qs);
+    setQuestionStates(qs.map(() => ({ selectedAnswer: null, selectedAnswers: [], flagged: false })));
+    setCurrentIndex(0);
+    savedRef.current = false;
+    setShowNavigator(false);
+    setShowSubmitConfirm(false);
+    setReviewExplanations({});
+    setReviewLoadingIdx(null);
+  };
 
   const startBuiltIn = () => {
     clearSession('practice_quiz');
     setSavedSessionData(null);
-    setQuestions(QUIZ_QUESTIONS);
-    setMode('builtin');
+    initQuiz(QUIZ_QUESTIONS);
+    setQuizSource('builtin');
+    setPhase('quiz');
     setPresenceDetail(`Q1/${QUIZ_QUESTIONS.length}`);
-    resetQuiz();
   };
 
   const resumeQuiz = () => {
     if (!savedSessionData) return;
     setQuestions(savedSessionData.questions);
+    setQuestionStates(savedSessionData.questionStates);
     setCurrentIndex(savedSessionData.currentIndex);
-    setScore(savedSessionData.score);
-    setMode(savedSessionData.mode as QuizMode);
-    setSelectedAnswer(null);
-    setShowResult(false);
-    setAnswered(false);
-    setShowExplanation(false);
-    setExplanation('');
+    setQuizSource(savedSessionData.mode as 'builtin' | 'custom');
     savedRef.current = false;
+    setShowNavigator(false);
+    setShowSubmitConfirm(false);
+    setReviewExplanations({});
+    setReviewLoadingIdx(null);
     setSavedSessionData(null);
     clearSession('practice_quiz');
-  };
-
-  const handleSaveAndExit = () => {
-    if (questions.length === 0) return;
-    saveSession<PracticeQuizSession>({
-      type: 'practice_quiz',
-      questions,
-      currentIndex,
-      score,
-      mode,
-      savedAt: Date.now(),
-    });
-    setMode('select');
-    setCurrentIndex(0);
-    setSelectedAnswer(null);
-    setShowResult(false);
-    setScore(0);
-    setAnswered(false);
-    const session = loadSession<PracticeQuizSession>('practice_quiz');
-    if (session) setSavedSessionData(session);
+    setPhase('quiz');
+    setPresenceDetail(`Q${savedSessionData.currentIndex + 1}/${savedSessionData.questions.length} (Resumed)`);
   };
 
   const startCustomQuiz = async () => {
     clearSession('practice_quiz');
     setSavedSessionData(null);
-    setMode('loading-custom');
+    setPhase('loading-custom');
     setGenerateError('');
     try {
       const content = await getAllStudyContent();
       if (!content.trim()) {
         setGenerateError('No study materials found. Upload content first.');
-        setMode('select');
+        setPhase('select');
         return;
       }
       const result = await generateQuizFromContent(content, 10);
       if (result.error || !result.questions) {
         setGenerateError(result.error || 'Failed to generate quiz.');
-        setMode('select');
+        setPhase('select');
         return;
       }
-      setQuestions(result.questions);
-      setMode('custom');
-      resetQuiz();
+      initQuiz(result.questions);
+      setQuizSource('custom');
+      setPhase('quiz');
     } catch {
       setGenerateError('Failed to generate quiz. Please try again.');
-      setMode('select');
+      setPhase('select');
     }
   };
 
-  const resetQuiz = () => {
-    setCurrentIndex(0);
-    setSelectedAnswer(null);
-    setShowResult(false);
-    setScore(0);
-    setAnswered(false);
-    setShowExplanation(false);
-    setExplanation('');
-    savedRef.current = false;
-    missedRef.current = [];
+  // Auto-save refs
+  const questionsRef = useRef(questions);
+  const statesRef = useRef(questionStates);
+  const indexRef = useRef(currentIndex);
+  const quizSourceRef = useRef(quizSource);
+  questionsRef.current = questions;
+  statesRef.current = questionStates;
+  indexRef.current = currentIndex;
+  quizSourceRef.current = quizSource;
+
+  const saveCurrentSession = useCallback(() => {
+    if (questionsRef.current.length === 0) return;
+    saveSession<PracticeQuizSession>({
+      type: 'practice_quiz',
+      questions: questionsRef.current,
+      questionStates: statesRef.current,
+      currentIndex: indexRef.current,
+      mode: quizSourceRef.current,
+      savedAt: Date.now(),
+    });
+  }, []);
+
+  // Auto-save every 30s + on beforeunload
+  useEffect(() => {
+    if (phase !== 'quiz') return;
+    const interval = setInterval(saveCurrentSession, 30_000);
+    const handleUnload = () => saveCurrentSession();
+    window.addEventListener('beforeunload', handleUnload);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('beforeunload', handleUnload);
+    };
+  }, [phase, saveCurrentSession]);
+
+  const handleSaveAndExit = () => {
+    saveCurrentSession();
+    setPhase('select');
+    const session = loadSession<PracticeQuizSession>('practice_quiz');
+    if (session) setSavedSessionData(session);
   };
 
-  const question = questions[currentIndex];
-  const isLastQuestion = currentIndex === questions.length - 1;
-
-  // Save results to Firestore when quiz completes
+  // Update presence when navigating
   useEffect(() => {
-    if (!(isLastQuestion && answered) || savedRef.current || questions.length === 0) return;
-    savedRef.current = true;
-    clearSession('practice_quiz');
+    if (phase === 'quiz' && questions.length > 0) {
+      const answered = questionStates.filter(s => s.selectedAnswers.length > 0).length;
+      setPresenceDetail(`Q${currentIndex + 1}/${questions.length} (${answered} answered)`);
+    }
+  }, [phase, currentIndex, questions.length, questionStates]);
 
+  // Navigation
+  const goToQuestion = (index: number) => {
+    setCurrentIndex(index);
+    setShowNavigator(false);
+  };
+  const goNext = () => {
+    if (currentIndex < questions.length - 1) setCurrentIndex((i) => i + 1);
+  };
+  const goPrev = () => {
+    if (currentIndex > 0) setCurrentIndex((i) => i - 1);
+  };
+
+  const selectAnswer = (index: number) => {
+    setQuestionStates((prev) => {
+      const next = [...prev];
+      next[currentIndex] = { ...next[currentIndex], selectedAnswer: index, selectedAnswers: [index] };
+      return next;
+    });
+  };
+
+  const toggleFlag = () => {
+    setQuestionStates((prev) => {
+      const next = [...prev];
+      next[currentIndex] = { ...next[currentIndex], flagged: !next[currentIndex].flagged };
+      return next;
+    });
+  };
+
+  const handleSubmit = () => {
+    setShowSubmitConfirm(false);
+    clearSession('practice_quiz');
+    setPhase('results');
+  };
+
+  // Save results to Firestore
+  useEffect(() => {
+    if (phase !== 'results' || savedRef.current || questions.length === 0) return;
+    savedRef.current = true;
+
+    const score = questions.reduce(
+      (acc, q, i) => acc + (questionStates[i].selectedAnswer === q.correctIndex ? 1 : 0),
+      0
+    );
     const percentage = Math.round((score / questions.length) * 100);
+
+    const missedQuestions: QuestionResult[] = questions
+      .map((q, i) => {
+        if (questionStates[i].selectedAnswer === q.correctIndex) return null;
+        return {
+          question: q.question,
+          options: q.options,
+          correctIndex: q.correctIndex,
+          selectedIndex: questionStates[i].selectedAnswer,
+          isCorrect: false,
+        };
+      })
+      .filter(Boolean) as QuestionResult[];
+
     saveActivity({
       type: 'practice_quiz',
       score,
       total: questions.length,
       percentage,
-      quizMode: mode,
-      missedQuestions: missedRef.current.length > 0 ? missedRef.current : undefined,
+      quizMode: quizSource,
+      missedQuestions: missedQuestions.length > 0 ? missedQuestions : undefined,
     });
-  }, [isLastQuestion, answered, score, questions, mode]);
+  }, [phase, questions, questionStates, quizSource]);
 
-  const handleSelectAnswer = (index: number) => {
-    if (answered) return;
-    setSelectedAnswer(index);
-    setAnswered(true);
-    setShowResult(true);
-    if (index === question.correctIndex) {
-      setScore((s) => s + 1);
-    } else {
-      missedRef.current.push({
-        question: question.question,
-        options: question.options,
-        correctIndex: question.correctIndex,
-        selectedIndex: index,
-        isCorrect: false,
-      });
-    }
-  };
+  // Computed values
+  const answeredCount = questionStates.filter((s) => s.selectedAnswers.length > 0).length;
+  const flaggedCount = questionStates.filter((s) => s.flagged).length;
+  const unansweredCount = questions.length - answeredCount;
 
-  const handleNext = () => {
-    setSelectedAnswer(null);
-    setShowResult(false);
-    setAnswered(false);
-    setShowExplanation(false);
-    setExplanation('');
-    if (isLastQuestion) return;
-    setCurrentIndex((i) => i + 1);
-  };
-
-  const handleGetExplanation = async () => {
-    setLoadingExplanation(true);
+  // AI Explanation for review
+  const handleGetReviewExplanation = async (qIdx: number) => {
+    if (reviewExplanations[qIdx] !== undefined) return;
+    setReviewLoadingIdx(qIdx);
     try {
+      const q = questions[qIdx];
       const result = await explainQuestion(
-        question.question,
-        question.options,
-        question.correctIndex,
-        selectedAnswer
+        q.question,
+        q.options,
+        q.correctIndex,
+        questionStates[qIdx].selectedAnswer
       );
-      setExplanation(result);
-      setShowExplanation(true);
+      setReviewExplanations((prev) => ({ ...prev, [qIdx]: result }));
     } catch {
-      setExplanation('Unable to generate explanation. Please try again.');
-      setShowExplanation(true);
+      setReviewExplanations((prev) => ({ ...prev, [qIdx]: 'Unable to generate explanation. Please try again.' }));
     } finally {
-      setLoadingExplanation(false);
+      setReviewLoadingIdx(null);
     }
   };
 
-  const handleRestart = () => {
-    if (mode === 'custom') {
-      startCustomQuiz();
-    } else {
-      resetQuiz();
-    }
-  };
-
-  // Mode selection screen
-  if (mode === 'select' || mode === 'loading-custom') {
+  // ── SELECT SCREEN ──
+  if (phase === 'select' || phase === 'loading-custom') {
     return (
       <main className="min-h-screen bg-gradient-to-br from-indigo-50 to-blue-50 text-gray-900">
         <div className="max-w-2xl mx-auto px-6 py-8">
@@ -221,7 +292,7 @@ export default function QuizPage() {
                 <p className="text-sm text-indigo-600 mb-3">
                   {savedSessionData.mode === 'custom' ? 'AI-Generated' : 'Built-in'} Quiz &bull;{' '}
                   Question {savedSessionData.currentIndex + 1}/{savedSessionData.questions.length} &bull;{' '}
-                  Score: {savedSessionData.score}
+                  {savedSessionData.questionStates.filter(s => s.selectedAnswers.length > 0).length} answered
                 </p>
                 <div className="flex gap-3">
                   <button
@@ -270,7 +341,7 @@ export default function QuizPage() {
 
               <button
                 onClick={startBuiltIn}
-                disabled={mode === 'loading-custom'}
+                disabled={phase === 'loading-custom'}
                 className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 text-left hover:border-indigo-300 hover:shadow-md transition-all disabled:opacity-50"
               >
                 <div className="flex items-start gap-4">
@@ -288,12 +359,12 @@ export default function QuizPage() {
 
               <button
                 onClick={startCustomQuiz}
-                disabled={!hasStudyContent || mode === 'loading-custom'}
+                disabled={!hasStudyContent || phase === 'loading-custom'}
                 className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 text-left hover:border-indigo-300 hover:shadow-md transition-all disabled:opacity-50 relative"
               >
                 <div className="flex items-start gap-4">
                   <div className="w-12 h-12 bg-purple-50 rounded-xl flex items-center justify-center flex-shrink-0">
-                    {mode === 'loading-custom' ? (
+                    {phase === 'loading-custom' ? (
                       <Loader2 className="w-6 h-6 text-purple-500 animate-spin" />
                     ) : (
                       <Sparkles className="w-6 h-6 text-purple-500" />
@@ -302,7 +373,7 @@ export default function QuizPage() {
                   <div>
                     <h3 className="font-bold text-lg">
                       AI-Generated from Your Materials
-                      {mode === 'loading-custom' && (
+                      {phase === 'loading-custom' && (
                         <span className="text-sm font-normal text-purple-600 ml-2">Generating...</span>
                       )}
                     </h3>
@@ -331,9 +402,14 @@ export default function QuizPage() {
     );
   }
 
-  // Results screen
-  if (isLastQuestion && answered) {
+  // ── RESULTS SCREEN ──
+  if (phase === 'results') {
+    const score = questions.reduce(
+      (acc, q, i) => acc + (questionStates[i].selectedAnswer === q.correctIndex ? 1 : 0),
+      0
+    );
     const percentage = Math.round((score / questions.length) * 100);
+
     return (
       <main className="min-h-screen bg-gradient-to-br from-indigo-50 to-blue-50 text-gray-900">
         <motion.div
@@ -346,18 +422,34 @@ export default function QuizPage() {
             You got <span className="font-bold text-indigo-600">{score}</span> out of{' '}
             <span className="font-bold">{questions.length}</span> correct ({percentage}%)
           </p>
-          {mode === 'custom' && (
+          {quizSource === 'custom' && (
             <p className="text-sm text-purple-600 mb-8">Generated from your study materials</p>
           )}
           <div className="flex gap-4 justify-center flex-wrap">
             <button
-              onClick={handleRestart}
-              className="px-6 py-3 bg-indigo-600 text-white rounded-xl font-semibold hover:bg-indigo-700 transition-colors"
+              onClick={() => setPhase('review')}
+              className="px-6 py-3 bg-white text-indigo-700 rounded-xl font-semibold border border-indigo-200 hover:bg-indigo-50 transition-colors inline-flex items-center gap-2"
             >
-              {mode === 'custom' ? 'Generate New Quiz' : 'Try Again'}
+              <CheckCircle className="w-5 h-5" />
+              Review Answers
             </button>
             <button
-              onClick={() => setMode('select')}
+              onClick={() => {
+                if (quizSource === 'custom') {
+                  startCustomQuiz();
+                } else {
+                  initQuiz(QUIZ_QUESTIONS);
+                  setQuizSource('builtin');
+                  setPhase('quiz');
+                }
+              }}
+              className="px-6 py-3 bg-indigo-600 text-white rounded-xl font-semibold hover:bg-indigo-700 transition-colors inline-flex items-center gap-2"
+            >
+              <RotateCcw className="w-5 h-5" />
+              {quizSource === 'custom' ? 'Generate New Quiz' : 'Try Again'}
+            </button>
+            <button
+              onClick={() => setPhase('select')}
               className="px-6 py-3 bg-white text-gray-700 rounded-xl font-semibold border border-gray-200 hover:bg-gray-50 transition-colors"
             >
               Change Quiz Type
@@ -374,125 +466,230 @@ export default function QuizPage() {
     );
   }
 
-  // Quiz in progress
-  return (
-    <main className="min-h-screen bg-gradient-to-br from-indigo-50 to-blue-50 text-gray-900">
-      <div className="p-4 flex justify-between items-center max-w-3xl mx-auto">
-        <button
-          onClick={handleSaveAndExit}
-          className="inline-flex items-center gap-1 text-indigo-600 hover:text-indigo-700 text-sm font-medium"
-        >
-          <ChevronLeft className="w-4 h-4" />
-          Save &amp; Exit
-        </button>
-        <span className="text-sm font-medium text-gray-500">
-          {currentIndex + 1}/{questions.length} &bull; Score: {score}/{currentIndex + (answered ? 1 : 0)}{' '}
-          ({currentIndex + (answered ? 1 : 0) > 0 ? Math.round((score / (currentIndex + (answered ? 1 : 0))) * 100) : 0}%)
-          {mode === 'custom' && (
-            <span className="ml-2 text-purple-600">(AI Generated)</span>
-          )}
-        </span>
-      </div>
+  // ── REVIEW SCREEN ──
+  if (phase === 'review') {
+    return (
+      <main className="min-h-screen bg-gradient-to-br from-indigo-50 to-blue-50 text-gray-900">
+        <div className="p-4 border-b border-gray-200 bg-white/80 backdrop-blur sticky top-0 z-10">
+          <div className="max-w-3xl mx-auto flex items-center justify-between">
+            <button onClick={() => setPhase('results')} className="inline-flex items-center gap-2 text-indigo-600 hover:text-indigo-700 text-sm font-medium">
+              <ChevronLeft className="w-5 h-5" /> Back to Results
+            </button>
+            <h1 className="font-bold">Answer Review</h1>
+            <div />
+          </div>
+        </div>
+        <div className="max-w-3xl mx-auto px-6 py-6 space-y-4">
+          {questions.map((q, i) => {
+            const state = questionStates[i];
+            const isCorrect = state.selectedAnswer === q.correctIndex;
+            const hasExplanation = reviewExplanations[i] !== undefined;
+            return (
+              <div key={i} className={`rounded-xl p-5 border ${isCorrect ? 'border-green-200 bg-green-50/50' : 'border-red-200 bg-red-50/50'}`}>
+                <div className="flex items-start gap-3 mb-3">
+                  <span className="text-xs font-mono bg-gray-100 px-2 py-1 rounded">{i + 1}</span>
+                  <div className="flex-1">
+                    <p className="font-medium text-sm mb-1">{q.question}</p>
+                    <span className="text-xs text-indigo-500">{q.topic}</span>
+                  </div>
+                  {isCorrect ? <CheckCircle className="w-5 h-5 text-green-500 flex-shrink-0" /> : <XCircle className="w-5 h-5 text-red-500 flex-shrink-0" />}
+                </div>
+                <div className="space-y-1.5 ml-8">
+                  {q.options.map((opt, oi) => {
+                    const isCorrectOpt = oi === q.correctIndex;
+                    const isSelectedOpt = oi === state.selectedAnswer;
+                    return (
+                      <div
+                        key={oi}
+                        className={`text-sm px-3 py-2 rounded-lg ${
+                          isCorrectOpt
+                            ? 'bg-green-100 text-green-800 border border-green-200'
+                            : isSelectedOpt && !isCorrectOpt
+                              ? 'bg-red-100 text-red-800 border border-red-200'
+                              : 'bg-gray-50 text-gray-500'
+                        }`}
+                      >
+                        {opt}
+                        {isCorrectOpt && <span className="ml-2 text-xs opacity-70">(correct)</span>}
+                        {isSelectedOpt && !isCorrectOpt && <span className="ml-2 text-xs opacity-70">(your answer)</span>}
+                        {state.selectedAnswer === null && isCorrectOpt && <span className="ml-2 text-xs text-amber-600">(unanswered)</span>}
+                      </div>
+                    );
+                  })}
+                </div>
+                {/* AI Explanation */}
+                <div className="ml-8 mt-3">
+                  {!hasExplanation && (
+                    <button
+                      onClick={() => handleGetReviewExplanation(i)}
+                      disabled={reviewLoadingIdx === i}
+                      className="flex items-center gap-2 px-3 py-1.5 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors text-sm disabled:opacity-50"
+                    >
+                      {reviewLoadingIdx === i ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <Sparkles className="w-4 h-4" />
+                      )}
+                      {reviewLoadingIdx === i ? 'Getting explanation...' : 'Explain with AI'}
+                    </button>
+                  )}
+                  {hasExplanation && (
+                    <div className="mt-2 p-3 bg-indigo-50 rounded-lg border border-indigo-100">
+                      <p className="text-xs font-medium text-indigo-800 mb-1">AI Explanation</p>
+                      <div className="text-gray-700 text-sm whitespace-pre-wrap">
+                        {parseExplanation(reviewExplanations[i]).segments.map((seg, si) =>
+                          seg.type === 'bold' ? (
+                            <strong key={si} className="font-semibold text-gray-900">{seg.value}</strong>
+                          ) : seg.type === 'link' ? (
+                            <a key={si} href={seg.href} target="_blank" rel="noopener noreferrer" className="text-indigo-600 underline hover:text-indigo-800 break-all">{seg.value}</a>
+                          ) : (
+                            <span key={si}>{seg.value}</span>
+                          )
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </main>
+    );
+  }
 
-      <div className="max-w-2xl mx-auto px-6">
+  // ── QUIZ IN PROGRESS ──
+  const question = questions[currentIndex];
+  const state = questionStates[currentIndex];
+  if (!question || !state) return null;
+
+  return (
+    <main className="min-h-screen bg-gradient-to-br from-indigo-50 to-blue-50 text-gray-900 flex flex-col">
+      {/* Top Bar */}
+      <header className="bg-white/80 backdrop-blur border-b border-gray-200 px-4 py-3 sticky top-0 z-20">
+        <div className="max-w-3xl mx-auto flex items-center justify-between">
+          <span className="text-sm text-gray-500">
+            {answeredCount}/{questions.length} answered
+            {flaggedCount > 0 && (
+              <span className="ml-2 text-amber-500 inline-flex items-center gap-1">
+                <Flag className="w-3.5 h-3.5" /> {flaggedCount}
+              </span>
+            )}
+          </span>
+          {quizSource === 'custom' && (
+            <span className="text-xs text-purple-600 font-medium">AI Generated</span>
+          )}
+          <button
+            onClick={() => setShowNavigator(!showNavigator)}
+            className="px-3 py-1.5 bg-gray-100 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-200 transition-colors"
+          >
+            Q {currentIndex + 1}/{questions.length}
+          </button>
+        </div>
+        {/* Progress Bar */}
+        <div className="max-w-3xl mx-auto mt-2">
+          <div className="h-1.5 bg-gray-200 rounded-full overflow-hidden">
+            <div
+              className="h-full bg-indigo-500 rounded-full transition-all duration-300"
+              style={{ width: `${(answeredCount / questions.length) * 100}%` }}
+            />
+          </div>
+        </div>
+      </header>
+
+      {/* Question Navigator Overlay */}
+      <QuestionNavigator
+        open={showNavigator}
+        totalQuestions={questions.length}
+        questionStates={questionStates}
+        currentIndex={currentIndex}
+        onGoToQuestion={goToQuestion}
+        onClose={() => setShowNavigator(false)}
+      />
+
+      {/* Submit Confirm Modal */}
+      <SubmitConfirmModal
+        open={showSubmitConfirm}
+        unansweredCount={unansweredCount}
+        flaggedCount={flaggedCount}
+        onCancel={() => setShowSubmitConfirm(false)}
+        onConfirm={handleSubmit}
+      />
+
+      {/* Question Content */}
+      <div className="flex-1 max-w-2xl w-full mx-auto px-6 py-8">
         <AnimatePresence mode="wait">
           <motion.div
             key={currentIndex}
             initial={{ opacity: 0, x: 20 }}
             animate={{ opacity: 1, x: 0 }}
             exit={{ opacity: 0, x: -20 }}
-            transition={{ duration: 0.2 }}
+            transition={{ duration: 0.15 }}
           >
-            <div className="mb-4">
-              <span className="text-xs font-medium text-indigo-600 bg-indigo-100 px-2 py-1 rounded">
+            {/* Question Header */}
+            <div className="flex items-center justify-between mb-4">
+              <span className="text-xs font-medium text-indigo-600 bg-indigo-100 px-2.5 py-1 rounded-full">
                 {question.topic}
               </span>
+              <button
+                onClick={toggleFlag}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm transition-colors ${
+                  state.flagged
+                    ? 'bg-amber-400 text-amber-900'
+                    : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+                }`}
+              >
+                <Flag className="w-4 h-4" />
+                {state.flagged ? 'Flagged' : 'Flag'}
+              </button>
             </div>
-            <h2 className="text-2xl font-bold mb-8">{question.question}</h2>
 
+            {/* Question */}
+            <h2 className="text-xl font-bold mb-6 leading-relaxed">
+              <span className="text-indigo-500 mr-2">{currentIndex + 1}.</span>
+              {question.question}
+            </h2>
+
+            {/* Options */}
             <div className="space-y-3">
               {question.options.map((option, index) => {
-                const isCorrect = index === question.correctIndex;
-                const isSelected = index === selectedAnswer;
-                const showCorrect = answered && isCorrect;
-                const showWrong = answered && isSelected && !isCorrect;
-
+                const isSelected = state.selectedAnswer === index;
+                const letter = String.fromCharCode(65 + index);
                 return (
                   <button
                     key={index}
-                    onClick={() => handleSelectAnswer(index)}
-                    disabled={answered}
+                    onClick={() => selectAnswer(index)}
                     className={`w-full text-left p-4 rounded-xl border-2 transition-all ${
-                      showCorrect
-                        ? 'border-green-500 bg-green-50'
-                        : showWrong
-                          ? 'border-red-500 bg-red-50'
-                          : isSelected
-                            ? 'border-indigo-500 bg-indigo-50'
-                            : 'border-gray-200 bg-white hover:border-indigo-300 hover:bg-indigo-50/50'
-                    } ${answered ? 'cursor-default' : 'cursor-pointer'}`}
+                      isSelected
+                        ? 'border-indigo-500 bg-indigo-50'
+                        : 'border-gray-200 bg-white hover:border-indigo-300 hover:bg-indigo-50/50'
+                    }`}
                   >
                     <span className="flex items-center gap-3">
-                      {showCorrect && <Check className="w-5 h-5 text-green-600 flex-shrink-0" />}
-                      {showWrong && <X className="w-5 h-5 text-red-600 flex-shrink-0" />}
-                      <span>{option}</span>
+                      <span className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0 ${
+                        isSelected ? 'bg-indigo-500 text-white' : 'bg-gray-100 text-gray-500'
+                      }`}>
+                        {letter}
+                      </span>
+                      <span className="text-sm">{option}</span>
                     </span>
                   </button>
                 );
               })}
             </div>
-
-            {answered && (
-              <motion.div
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="mt-8"
-              >
-                <button
-                  onClick={handleGetExplanation}
-                  disabled={loadingExplanation}
-                  className="flex items-center gap-2 px-4 py-2 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors disabled:opacity-50"
-                >
-                  {loadingExplanation ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <Sparkles className="w-4 h-4" />
-                  )}
-                  {loadingExplanation ? 'Getting AI explanation...' : 'Explain with AI'}
-                </button>
-
-                {showExplanation && (
-                  <motion.div
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    className="mt-4 p-4 bg-indigo-50 rounded-xl border border-indigo-100"
-                  >
-                    <p className="text-sm font-medium text-indigo-800 mb-2">AI Explanation</p>
-                    <div className="text-gray-700 text-sm whitespace-pre-wrap">
-                      {parseExplanation(explanation).segments.map((seg, si) =>
-                        seg.type === 'bold' ? (
-                          <strong key={si} className="font-semibold text-gray-900">{seg.value}</strong>
-                        ) : seg.type === 'link' ? (
-                          <a key={si} href={seg.href} target="_blank" rel="noopener noreferrer" className="text-indigo-600 underline hover:text-indigo-800 break-all">{seg.value}</a>
-                        ) : (
-                          <span key={si}>{seg.value}</span>
-                        )
-                      )}
-                    </div>
-                  </motion.div>
-                )}
-
-                <button
-                  onClick={handleNext}
-                  className="mt-6 w-full py-3 bg-indigo-600 text-white rounded-xl font-semibold hover:bg-indigo-700 transition-colors"
-                >
-                  {isLastQuestion ? 'See Results' : 'Next Question'}
-                </button>
-              </motion.div>
-            )}
           </motion.div>
         </AnimatePresence>
       </div>
+
+      {/* Bottom Navigation */}
+      <BottomNavBar
+        currentIndex={currentIndex}
+        totalQuestions={questions.length}
+        onPrev={goPrev}
+        onNext={goNext}
+        onSubmit={() => setShowSubmitConfirm(true)}
+        onSaveAndExit={handleSaveAndExit}
+      />
     </main>
   );
 }

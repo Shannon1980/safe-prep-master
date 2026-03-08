@@ -17,7 +17,7 @@ export interface LessonQuizSession {
   type: 'lesson_quiz';
   lessonId: number;
   questions: LessonQuizQuestion[];
-  answerStates: { selectedAnswer: number | null; selectedAnswers: number[]; answered: boolean }[];
+  answerStates: { selectedAnswer: number | null; selectedAnswers: number[]; flagged: boolean }[];
   currentIndex: number;
   savedAt: number;
 }
@@ -25,8 +25,8 @@ export interface LessonQuizSession {
 export interface PracticeQuizSession {
   type: 'practice_quiz';
   questions: QuizQuestion[];
+  questionStates: { selectedAnswer: number | null; selectedAnswers: number[]; flagged: boolean }[];
   currentIndex: number;
-  score: number;
   mode: string;
   savedAt: number;
 }
