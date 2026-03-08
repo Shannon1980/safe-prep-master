@@ -313,7 +313,7 @@ export default function ProgressPage() {
                         href="/quiz/lesson"
                         savedAt={savedSessions.lessonQuiz.savedAt}
                         details={[
-                          `${savedSessions.lessonQuiz.answerStates.filter(s => s.answered).length}/${savedSessions.lessonQuiz.questions.length} answered`,
+                          `${savedSessions.lessonQuiz.answerStates.filter(s => s.selectedAnswers.length > 0).length}/${savedSessions.lessonQuiz.questions.length} answered`,
                           `On question ${savedSessions.lessonQuiz.currentIndex + 1}`,
                         ]}
                       />
@@ -328,7 +328,7 @@ export default function ProgressPage() {
                       savedAt={savedSessions.practiceQuiz.savedAt}
                       details={[
                         `Question ${savedSessions.practiceQuiz.currentIndex + 1}/${savedSessions.practiceQuiz.questions.length}`,
-                        `Score: ${savedSessions.practiceQuiz.score}`,
+                        `${savedSessions.practiceQuiz.questionStates.filter(s => s.selectedAnswers.length > 0).length} answered`,
                       ]}
                     />
                   )}
