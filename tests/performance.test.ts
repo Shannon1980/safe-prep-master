@@ -24,6 +24,7 @@ import {
   getLessonQuestions,
   getSectionQuestions,
   getSectionQuestionCount,
+  getSectionQuizCap,
   getLessonQuestionCount,
   type LessonQuizQuestion,
 } from '../data/lesson-config';
@@ -231,11 +232,13 @@ describe('Lesson Quiz Performance', () => {
     }
   });
 
-  it('section questions should be capped at 10', () => {
+  it('section questions should be capped at dynamic limit', () => {
     for (const lesson of LESSONS) {
       for (const section of lesson.sections) {
         const qs = getSectionQuestions(lesson.id, section.id);
-        expect(qs.length).toBeLessThanOrEqual(10);
+        const poolSize = getSectionQuestionCount(lesson.id, section.id);
+        const cap = getSectionQuizCap(poolSize);
+        expect(qs.length).toBeLessThanOrEqual(cap);
       }
     }
   });
