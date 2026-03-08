@@ -27,7 +27,6 @@ const NAV_LINKS = [
   { href: '/quiz/lesson', label: 'Lesson Quizzes', icon: GraduationCap },
   { href: '/quiz', label: 'Practice Quiz', icon: Zap },
   { href: '/flashcards', label: 'Flashcards', icon: BookOpen },
-  { href: '/upload', label: 'Upload', icon: Upload },
 ];
 
 export default function Header() {
@@ -68,6 +67,17 @@ export default function Header() {
               </Link>
             );
           })}
+          <Link
+            href="/upload"
+            title="Upload"
+            className={`p-2 rounded-lg transition-colors ${
+              pathname.startsWith('/upload')
+                ? 'text-indigo-700 bg-indigo-50'
+                : 'text-gray-600 hover:text-indigo-700 hover:bg-indigo-50'
+            }`}
+          >
+            <Upload className="w-4 h-4" />
+          </Link>
           {user && (
             <Link
               href="/progress"
@@ -84,14 +94,14 @@ export default function Header() {
           {isAdmin(user?.email) && (
             <Link
               href="/admin"
-              className={`flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-lg transition-colors ${
+              title="Admin"
+              className={`p-2 rounded-lg transition-colors ${
                 pathname === '/admin'
                   ? 'text-amber-700 bg-amber-50'
                   : 'text-amber-600 hover:text-amber-700 hover:bg-amber-50'
               }`}
             >
               <ShieldCheck className="w-4 h-4" />
-              Admin
             </Link>
           )}
         </nav>
@@ -187,6 +197,19 @@ export default function Header() {
                 </Link>
               );
             })}
+
+            <Link
+              href="/upload"
+              onClick={() => setMobileMenuOpen(false)}
+              className={`flex items-center gap-2 px-3 py-2.5 text-sm font-medium rounded-lg transition-colors ${
+                pathname.startsWith('/upload')
+                  ? 'text-indigo-700 bg-indigo-50'
+                  : 'text-gray-600 hover:text-indigo-700 hover:bg-indigo-50'
+              }`}
+            >
+              <Upload className="w-4 h-4" />
+              Upload
+            </Link>
 
             {/* Mobile progress */}
             {user && (
