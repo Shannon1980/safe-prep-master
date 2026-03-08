@@ -388,6 +388,11 @@ export default function AdminPage() {
                           }`}>
                             {u.activity}
                           </span>
+                          {u.detail && (
+                            <span className="text-xs text-gray-500 font-medium truncate max-w-[200px]">
+                              {u.detail}
+                            </span>
+                          )}
                           <span className="text-xs text-gray-400">{timeLabel}</span>
                         </div>
                       </div>

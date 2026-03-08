@@ -30,7 +30,7 @@ import {
   type LessonSection,
   type LessonQuizQuestion,
 } from '@/data/lesson-config';
-import { explainQuestion } from '@/app/lib/gemini';
+import { explainQuestion, parseExplanation } from '@/app/lib/gemini';
 import { saveActivity } from '@/app/lib/activity';
 import { getFullLessonPool } from '@/app/lib/question-bank';
 import {
@@ -40,6 +40,7 @@ import {
   formatTimeSince,
   type LessonQuizSession,
 } from '@/app/lib/session-storage';
+import { setPresenceDetail, clearPresenceDetail } from '@/app/lib/presence';
 
 type Phase = 'select' | 'sections' | 'quiz' | 'results';
 
@@ -108,6 +109,7 @@ export default function LessonQuizPage() {
   const openLessonSections = useCallback((lesson: LessonConfig) => {
     setSelectedLesson(lesson);
     setPhase('sections');
+    setPresenceDetail(`Lesson ${lesson.id}: ${lesson.shortTitle}`);
     fetchLessonPool(lesson.id);
   }, [fetchLessonPool]);
 
@@ -127,6 +129,7 @@ export default function LessonQuizPage() {
     setShowReview(false);
     savedRef.current = false;
     setPhase('quiz');
+    setPresenceDetail(`Lesson ${lesson.id}: ${lesson.shortTitle} (Full)`);
   }, [fetchLessonPool]);
 
   const startSectionQuiz = useCallback(async (lesson: LessonConfig, section: LessonSection) => {
@@ -146,6 +149,7 @@ export default function LessonQuizPage() {
     setShowReview(false);
     savedRef.current = false;
     setPhase('quiz');
+    setPresenceDetail(`Lesson ${lesson.id} — ${section.name}`);
   }, [fetchLessonPool]);
 
   // Keep legacy startLesson for resume functionality
@@ -167,6 +171,7 @@ export default function LessonQuizPage() {
     setSavedSessionData(null);
     clearSession('lesson_quiz');
     setPhase('quiz');
+    if (lesson) setPresenceDetail(`Lesson ${lesson.id}: ${lesson.shortTitle} (Resumed)`);
   }, [savedSessionData]);
 
   const handleSaveAndExit = useCallback(() => {
@@ -179,6 +184,7 @@ export default function LessonQuizPage() {
       currentIndex,
       savedAt: Date.now(),
     });
+    clearPresenceDetail();
     setPhase('select');
     const session = loadSession<LessonQuizSession>('lesson_quiz');
     if (session) setSavedSessionData(session);
@@ -248,6 +254,22 @@ export default function LessonQuizPage() {
     clearSession('lesson_quiz');
 
     const percentage = Math.round((score / questions.length) * 100);
+
+    const missedQuestions = questions
+      .map((q, i) => {
+        const correct = isAnswerCorrect(q, answerStates[i]);
+        if (correct) return null;
+        return {
+          question: q.question,
+          options: q.options,
+          correctIndex: q.correctIndex,
+          selectedIndex: answerStates[i].selectedAnswer,
+          isCorrect: false,
+          section: selectedLesson.sections.find(s => s.id === q.section)?.name || q.section,
+        };
+      })
+      .filter(Boolean) as { question: string; options: string[]; correctIndex: number; selectedIndex: number | null; isCorrect: boolean; section: string }[];
+
     saveActivity({
       type: 'lesson_quiz',
       score,
@@ -263,6 +285,7 @@ export default function LessonQuizPage() {
         total: r.total,
         percentage: r.percentage,
       })),
+      missedQuestions,
     });
   }, [phase, score, questions, selectedLesson, sectionResults]);
 
@@ -888,7 +911,17 @@ export default function LessonQuizPage() {
                     className="mt-4 p-4 bg-indigo-50 rounded-xl border border-indigo-100"
                   >
                     <p className="text-sm font-medium text-indigo-800 mb-2">AI Explanation</p>
-                    <p className="text-gray-700 text-sm">{explanation}</p>
+                    <div className="text-gray-700 text-sm whitespace-pre-wrap">
+                      {parseExplanation(explanation).segments.map((seg, si) =>
+                        seg.type === 'bold' ? (
+                          <strong key={si} className="font-semibold text-gray-900">{seg.value}</strong>
+                        ) : seg.type === 'link' ? (
+                          <a key={si} href={seg.href} target="_blank" rel="noopener noreferrer" className="text-indigo-600 underline hover:text-indigo-800 break-all">{seg.value}</a>
+                        ) : (
+                          <span key={si}>{seg.value}</span>
+                        )
+                      )}
+                    </div>
                   </motion.div>
                 )}
 

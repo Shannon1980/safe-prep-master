@@ -11,6 +11,7 @@ import {
   startHeartbeat,
   updateHeartbeatPath,
   stopHeartbeat,
+  clearPresenceDetail,
 } from '@/app/lib/presence';
 
 const HIDE_COACH_ROUTES = ['/exam', '/quiz', '/flashcards'];
@@ -31,6 +32,7 @@ function PresenceTracker() {
 
   useEffect(() => {
     if (!user) return;
+    clearPresenceDetail();
     updatePresence(pathname);
     updateHeartbeatPath(pathname);
   }, [pathname, user]);

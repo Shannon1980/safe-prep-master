@@ -139,7 +139,7 @@ export default function CoachPage() {
               value={input}
               onChange={(e) => setInput(e.target.value)}
               placeholder="Ask about SAFe..."
-              className="flex-1 px-4 py-3 rounded-xl border border-gray-200 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 outline-none transition-all"
+              className="flex-1 px-4 py-3 rounded-xl border border-gray-200 bg-white text-gray-900 placeholder:text-gray-400 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 outline-none transition-all"
               disabled={loading}
             />
             <button

@@ -18,6 +18,7 @@ export interface PresenceRecord {
   photoURL: string;
   currentPage: string;
   activity: string;
+  detail: string;
   lastSeen: Date | Timestamp;
 }
 
@@ -44,6 +45,17 @@ export function getActivityLabel(pathname: string): string {
 
 // ── Presence Operations ──
 
+let currentDetail = '';
+
+export function setPresenceDetail(detail: string): void {
+  currentDetail = detail;
+  updatePresence(currentPath);
+}
+
+export function clearPresenceDetail(): void {
+  currentDetail = '';
+}
+
 export async function updatePresence(pathname: string): Promise<void> {
   const db = getFirebaseDb();
   const auth = getFirebaseAuth();
@@ -58,6 +70,7 @@ export async function updatePresence(pathname: string): Promise<void> {
       photoURL: user.photoURL || '',
       currentPage: pathname,
       activity: getActivityLabel(pathname),
+      detail: currentDetail,
       lastSeen: Timestamp.now(),
     });
   } catch (error) {
@@ -104,6 +117,7 @@ export function subscribeToPresence(
         photoURL: data.photoURL,
         currentPage: data.currentPage,
         activity: data.activity,
+        detail: data.detail || '',
         lastSeen,
       });
     }

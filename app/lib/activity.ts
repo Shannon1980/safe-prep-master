@@ -14,6 +14,16 @@ import { getFirebaseDb, getFirebaseAuth } from './firebase';
 
 export type ActivityType = 'exam' | 'lesson_quiz' | 'practice_quiz' | 'flashcard_session';
 
+export interface QuestionResult {
+  question: string;
+  options: string[];
+  correctIndex: number;
+  selectedIndex: number | null;
+  isCorrect: boolean;
+  domain?: string;
+  section?: string;
+}
+
 export interface ActivityRecord {
   id?: string;
   uid: string;
@@ -30,6 +40,7 @@ export interface ActivityRecord {
   quizMode?: string;
   domainBreakdown?: Record<string, { correct: number; total: number }>;
   sectionBreakdown?: { section: string; correct: number; total: number; percentage: number }[];
+  missedQuestions?: QuestionResult[];
   createdAt: Date | Timestamp;
 }
 

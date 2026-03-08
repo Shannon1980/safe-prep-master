@@ -19,9 +19,12 @@ import {
   CheckCircle,
   AlertTriangle,
   Play,
+  Eye,
+  Sparkles,
 } from 'lucide-react';
 import { useAuth } from '@/app/context/AuthContext';
-import { getMyActivity, type ActivityRecord } from '@/app/lib/activity';
+import { getMyActivity, type ActivityRecord, type QuestionResult } from '@/app/lib/activity';
+import { explainQuestion, parseExplanation } from '@/app/lib/gemini';
 import {
   loadSession,
   formatTimeSince,
@@ -372,6 +375,7 @@ export default function ProgressPage() {
                   {exams.map((exam) => {
                     const date = exam.createdAt instanceof Date ? exam.createdAt : new Date();
                     const expanded = expandedId === exam.id;
+                    const missedCount = exam.missedQuestions?.length ?? 0;
                     return (
                       <div
                         key={exam.id}
@@ -406,6 +410,7 @@ export default function ProgressPage() {
                               </p>
                               <p className="text-xs text-gray-400">
                                 {exam.score}/{exam.total} correct
+                                {missedCount > 0 ? ` · ${missedCount} missed` : ''}
                                 {exam.timeTakenSeconds
                                   ? ` · ${formatDuration(exam.timeTakenSeconds)}`
                                   : ''}
@@ -415,6 +420,11 @@ export default function ProgressPage() {
                             </div>
                           </div>
                           <div className="flex items-center gap-2">
+                            {missedCount > 0 && (
+                              <span className="text-xs bg-red-50 text-red-600 px-2 py-0.5 rounded-full font-medium hidden sm:inline">
+                                Review {missedCount}
+                              </span>
+                            )}
                             <span className="text-xs text-gray-400 hidden sm:inline">
                               {formatDate(date)}
                             </span>
@@ -426,43 +436,50 @@ export default function ProgressPage() {
                           </div>
                         </button>
 
-                        {expanded && exam.domainBreakdown && (
-                          <div className="border-t border-gray-100 bg-gray-50 px-4 py-4">
-                            <p className="text-xs font-semibold text-gray-500 mb-3">
-                              Domain Breakdown
-                            </p>
-                            <div className="space-y-2.5">
-                              {Object.entries(exam.domainBreakdown).map(
-                                ([domain, { correct, total }]) => {
-                                  const pct = total > 0 ? Math.round((correct / total) * 100) : 0;
-                                  return (
-                                    <div key={domain}>
-                                      <div className="flex justify-between text-xs mb-1">
-                                        <span className="text-gray-700">{domain}</span>
-                                        <span className="font-medium">
-                                          {pct}%{' '}
-                                          <span className="text-gray-400">
-                                            ({correct}/{total})
-                                          </span>
-                                        </span>
-                                      </div>
-                                      <div className="h-1.5 bg-gray-200 rounded-full overflow-hidden">
-                                        <div
-                                          className={`h-full rounded-full ${
-                                            pct >= 73
-                                              ? 'bg-green-500'
-                                              : pct >= 50
-                                                ? 'bg-yellow-500'
-                                                : 'bg-red-500'
-                                          }`}
-                                          style={{ width: `${pct}%` }}
-                                        />
-                                      </div>
-                                    </div>
-                                  );
-                                }
-                              )}
-                            </div>
+                        {expanded && (
+                          <div className="border-t border-gray-100">
+                            {exam.domainBreakdown && (
+                              <div className="bg-gray-50 px-4 py-4">
+                                <p className="text-xs font-semibold text-gray-500 mb-3">
+                                  Domain Breakdown
+                                </p>
+                                <div className="space-y-2.5">
+                                  {Object.entries(exam.domainBreakdown).map(
+                                    ([domain, { correct, total }]) => {
+                                      const pct = total > 0 ? Math.round((correct / total) * 100) : 0;
+                                      return (
+                                        <div key={domain}>
+                                          <div className="flex justify-between text-xs mb-1">
+                                            <span className="text-gray-700">{domain}</span>
+                                            <span className="font-medium">
+                                              {pct}%{' '}
+                                              <span className="text-gray-400">
+                                                ({correct}/{total})
+                                              </span>
+                                            </span>
+                                          </div>
+                                          <div className="h-1.5 bg-gray-200 rounded-full overflow-hidden">
+                                            <div
+                                              className={`h-full rounded-full ${
+                                                pct >= 73
+                                                  ? 'bg-green-500'
+                                                  : pct >= 50
+                                                    ? 'bg-yellow-500'
+                                                    : 'bg-red-500'
+                                              }`}
+                                              style={{ width: `${pct}%` }}
+                                            />
+                                          </div>
+                                        </div>
+                                      );
+                                    }
+                                  )}
+                                </div>
+                              </div>
+                            )}
+                            {missedCount > 0 && (
+                              <MissedQuestionsReview questions={exam.missedQuestions!} />
+                            )}
                           </div>
                         )}
                       </div>
@@ -518,39 +535,54 @@ export default function ProgressPage() {
                   <p className="text-xs font-semibold text-gray-500 mt-4 mb-2">Recent Attempts</p>
                   {lessonQuizzes.slice(0, 8).map((q) => {
                     const date = q.createdAt instanceof Date ? q.createdAt : new Date();
+                    const expanded = expandedId === q.id;
+                    const missedCount = q.missedQuestions?.length ?? 0;
                     return (
                       <div
                         key={q.id}
-                        className="bg-white rounded-lg border border-gray-100 px-4 py-3 flex items-center justify-between"
+                        className="bg-white rounded-xl border border-gray-100 overflow-hidden"
                       >
-                        <div className="flex items-center gap-3">
-                          <div
-                            className={`w-8 h-8 rounded-lg flex items-center justify-center ${
-                              q.percentage >= 70 ? 'bg-green-50' : 'bg-amber-50'
-                            }`}
-                          >
-                            {q.percentage >= 70 ? (
-                              <CheckCircle className="w-4 h-4 text-green-500" />
-                            ) : (
-                              <AlertTriangle className="w-4 h-4 text-amber-500" />
+                        <button
+                          onClick={() => setExpandedId(expanded ? null : (q.id ?? null))}
+                          className="w-full px-4 py-3 flex items-center justify-between hover:bg-gray-50 transition-colors text-left"
+                        >
+                          <div className="flex items-center gap-3">
+                            <div
+                              className={`w-8 h-8 rounded-lg flex items-center justify-center ${
+                                q.percentage >= 70 ? 'bg-green-50' : 'bg-amber-50'
+                              }`}
+                            >
+                              {q.percentage >= 70 ? (
+                                <CheckCircle className="w-4 h-4 text-green-500" />
+                              ) : (
+                                <AlertTriangle className="w-4 h-4 text-amber-500" />
+                              )}
+                            </div>
+                            <div>
+                              <p className="text-sm font-medium">
+                                {q.lessonTitle || `Lesson ${q.lessonId}`}
+                              </p>
+                              <p className="text-xs text-gray-400">
+                                {q.score}/{q.total} · {missedCount > 0 ? `${missedCount} missed · ` : ''}{timeAgo(date)}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span
+                              className={`text-sm font-bold ${
+                                q.percentage >= 70 ? 'text-green-600' : 'text-amber-600'
+                              }`}
+                            >
+                              {q.percentage}%
+                            </span>
+                            {missedCount > 0 && (
+                              expanded ? <ChevronUp className="w-3.5 h-3.5 text-gray-400" /> : <ChevronDown className="w-3.5 h-3.5 text-gray-400" />
                             )}
                           </div>
-                          <div>
-                            <p className="text-sm font-medium">
-                              {q.lessonTitle || `Lesson ${q.lessonId}`}
-                            </p>
-                            <p className="text-xs text-gray-400">
-                              {q.score}/{q.total} · {timeAgo(date)}
-                            </p>
-                          </div>
-                        </div>
-                        <span
-                          className={`text-sm font-bold ${
-                            q.percentage >= 70 ? 'text-green-600' : 'text-amber-600'
-                          }`}
-                        >
-                          {q.percentage}%
-                        </span>
+                        </button>
+                        {expanded && missedCount > 0 && (
+                          <MissedQuestionsReview questions={q.missedQuestions!} />
+                        )}
                       </div>
                     );
                   })}
@@ -564,31 +596,46 @@ export default function ProgressPage() {
                 <div className="space-y-2">
                   {practiceQuizzes.slice(0, 10).map((q) => {
                     const date = q.createdAt instanceof Date ? q.createdAt : new Date();
+                    const expanded = expandedId === q.id;
+                    const missedCount = q.missedQuestions?.length ?? 0;
                     return (
                       <div
                         key={q.id}
-                        className="bg-white rounded-lg border border-gray-100 px-4 py-3 flex items-center justify-between"
+                        className="bg-white rounded-xl border border-gray-100 overflow-hidden"
                       >
-                        <div className="flex items-center gap-3">
-                          <div className="w-8 h-8 bg-blue-50 rounded-lg flex items-center justify-center">
-                            <Zap className="w-4 h-4 text-blue-500" />
-                          </div>
-                          <div>
-                            <p className="text-sm font-medium">
-                              {q.quizMode === 'custom' ? 'AI-Generated' : 'Built-in'} Quiz
-                            </p>
-                            <p className="text-xs text-gray-400">
-                              {q.score}/{q.total} · {timeAgo(date)}
-                            </p>
-                          </div>
-                        </div>
-                        <span
-                          className={`text-sm font-bold ${
-                            q.percentage >= 70 ? 'text-green-600' : 'text-amber-600'
-                          }`}
+                        <button
+                          onClick={() => setExpandedId(expanded ? null : (q.id ?? null))}
+                          className="w-full px-4 py-3 flex items-center justify-between hover:bg-gray-50 transition-colors text-left"
                         >
-                          {q.percentage}%
-                        </span>
+                          <div className="flex items-center gap-3">
+                            <div className="w-8 h-8 bg-blue-50 rounded-lg flex items-center justify-center">
+                              <Zap className="w-4 h-4 text-blue-500" />
+                            </div>
+                            <div>
+                              <p className="text-sm font-medium">
+                                {q.quizMode === 'custom' ? 'AI-Generated' : 'Built-in'} Quiz
+                              </p>
+                              <p className="text-xs text-gray-400">
+                                {q.score}/{q.total} · {missedCount > 0 ? `${missedCount} missed · ` : ''}{timeAgo(date)}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span
+                              className={`text-sm font-bold ${
+                                q.percentage >= 70 ? 'text-green-600' : 'text-amber-600'
+                              }`}
+                            >
+                              {q.percentage}%
+                            </span>
+                            {missedCount > 0 && (
+                              expanded ? <ChevronUp className="w-3.5 h-3.5 text-gray-400" /> : <ChevronDown className="w-3.5 h-3.5 text-gray-400" />
+                            )}
+                          </div>
+                        </button>
+                        {expanded && missedCount > 0 && (
+                          <MissedQuestionsReview questions={q.missedQuestions!} />
+                        )}
                       </div>
                     );
                   })}
@@ -760,5 +807,105 @@ function InProgressCard({
         <Play className="w-4 h-4" />
       </div>
     </Link>
+  );
+}
+
+function MissedQuestionsReview({ questions }: { questions: QuestionResult[] }) {
+  const [explanations, setExplanations] = useState<Record<number, string>>({});
+  const [loadingIdx, setLoadingIdx] = useState<number | null>(null);
+
+  const getExplanation = async (idx: number) => {
+    if (explanations[idx]) return;
+    const q = questions[idx];
+    setLoadingIdx(idx);
+    try {
+      const result = await explainQuestion(
+        q.question,
+        q.options,
+        q.correctIndex,
+        q.selectedIndex
+      );
+      setExplanations((prev) => ({ ...prev, [idx]: result }));
+    } catch {
+      setExplanations((prev) => ({ ...prev, [idx]: 'Unable to generate explanation.' }));
+    } finally {
+      setLoadingIdx(null);
+    }
+  };
+
+  return (
+    <div className="border-t border-gray-100 bg-red-50/30 px-4 py-4">
+      <div className="flex items-center gap-2 mb-3">
+        <Eye className="w-4 h-4 text-red-500" />
+        <p className="text-xs font-semibold text-red-700">
+          Missed Questions ({questions.length})
+        </p>
+      </div>
+      <div className="space-y-3">
+        {questions.map((q, idx) => (
+          <div key={idx} className="bg-white rounded-lg border border-red-100 p-3">
+            <p className="text-sm font-medium text-gray-900 mb-2">{q.question}</p>
+            {q.domain && (
+              <span className="text-xs text-gray-400 mb-2 block">Domain: {q.domain}</span>
+            )}
+            {q.section && (
+              <span className="text-xs text-gray-400 mb-2 block">Section: {q.section}</span>
+            )}
+            <div className="space-y-1.5 mb-2">
+              {q.options.map((opt, oi) => {
+                const isCorrect = oi === q.correctIndex;
+                const isSelected = oi === q.selectedIndex;
+                return (
+                  <div
+                    key={oi}
+                    className={`text-xs px-2.5 py-1.5 rounded-md ${
+                      isCorrect
+                        ? 'bg-green-100 text-green-800 font-medium'
+                        : isSelected
+                          ? 'bg-red-100 text-red-800'
+                          : 'bg-gray-50 text-gray-600'
+                    }`}
+                  >
+                    {opt}
+                    {isCorrect && <span className="ml-1 opacity-70">(correct)</span>}
+                    {isSelected && !isCorrect && (
+                      <span className="ml-1 opacity-70">(your answer)</span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+            {explanations[idx] ? (
+              <div className="bg-indigo-50 border border-indigo-100 rounded-md px-3 py-2 mt-2">
+                <div className="text-xs text-indigo-800 whitespace-pre-wrap">
+                  {parseExplanation(explanations[idx]).segments.map((seg, si) =>
+                    seg.type === 'bold' ? (
+                      <strong key={si} className="font-semibold text-indigo-900">{seg.value}</strong>
+                    ) : seg.type === 'link' ? (
+                      <a key={si} href={seg.href} target="_blank" rel="noopener noreferrer" className="text-indigo-600 underline hover:text-indigo-800 break-all">{seg.value}</a>
+                    ) : (
+                      <span key={si}>{seg.value}</span>
+                    )
+                  )}
+                </div>
+              </div>
+            ) : (
+              <button
+                onClick={() => getExplanation(idx)}
+                disabled={loadingIdx === idx}
+                className="inline-flex items-center gap-1.5 text-xs text-indigo-600 hover:text-indigo-700 font-medium mt-1 disabled:opacity-50"
+              >
+                {loadingIdx === idx ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Sparkles className="w-3.5 h-3.5" />
+                )}
+                {loadingIdx === idx ? 'Getting explanation...' : 'Explain with AI'}
+              </button>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }

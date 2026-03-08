@@ -138,7 +138,7 @@ export default function FloatingCoach() {
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 placeholder="Ask about SAFe..."
-                className="flex-1 px-3 py-2 rounded-lg border border-gray-200 text-sm focus:border-indigo-400 focus:ring-1 focus:ring-indigo-200 outline-none transition-all"
+                className="flex-1 px-3 py-2 rounded-lg border border-gray-200 bg-white text-gray-900 placeholder:text-gray-400 text-sm focus:border-indigo-400 focus:ring-1 focus:ring-indigo-200 outline-none transition-all"
                 disabled={loading}
               />
               <button

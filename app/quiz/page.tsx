@@ -6,8 +6,8 @@ import Link from 'next/link';
 import { Check, X, Sparkles, Loader2, Upload, BookOpen, GraduationCap, ChevronLeft } from 'lucide-react';
 import { QUIZ_QUESTIONS, type QuizQuestion } from '@/data/quiz-questions';
 import { getAllStudyContent } from '@/app/lib/study-content';
-import { explainQuestion, generateQuizFromContent } from '@/app/lib/gemini';
-import { saveActivity } from '@/app/lib/activity';
+import { explainQuestion, generateQuizFromContent, parseExplanation } from '@/app/lib/gemini';
+import { saveActivity, type QuestionResult } from '@/app/lib/activity';
 import {
   saveSession,
   loadSession,
@@ -15,6 +15,7 @@ import {
   formatTimeSince,
   type PracticeQuizSession,
 } from '@/app/lib/session-storage';
+import { setPresenceDetail } from '@/app/lib/presence';
 
 type QuizMode = 'select' | 'builtin' | 'custom' | 'loading-custom';
 
@@ -33,6 +34,7 @@ export default function QuizPage() {
   const [generateError, setGenerateError] = useState('');
   const [savedSessionData, setSavedSessionData] = useState<PracticeQuizSession | null>(null);
   const savedRef = useRef(false);
+  const missedRef = useRef<QuestionResult[]>([]);
 
   useEffect(() => {
     getAllStudyContent().then((content) => {
@@ -47,6 +49,7 @@ export default function QuizPage() {
     setSavedSessionData(null);
     setQuestions(QUIZ_QUESTIONS);
     setMode('builtin');
+    setPresenceDetail(`Q1/${QUIZ_QUESTIONS.length}`);
     resetQuiz();
   };
 
@@ -122,6 +125,7 @@ export default function QuizPage() {
     setShowExplanation(false);
     setExplanation('');
     savedRef.current = false;
+    missedRef.current = [];
   };
 
   const question = questions[currentIndex];
@@ -140,6 +144,7 @@ export default function QuizPage() {
       total: questions.length,
       percentage,
       quizMode: mode,
+      missedQuestions: missedRef.current.length > 0 ? missedRef.current : undefined,
     });
   }, [isLastQuestion, answered, score, questions, mode]);
 
@@ -150,6 +155,14 @@ export default function QuizPage() {
     setShowResult(true);
     if (index === question.correctIndex) {
       setScore((s) => s + 1);
+    } else {
+      missedRef.current.push({
+        question: question.question,
+        options: question.options,
+        correctIndex: question.correctIndex,
+        selectedIndex: index,
+        isCorrect: false,
+      });
     }
   };
 
@@ -455,7 +468,17 @@ export default function QuizPage() {
                     className="mt-4 p-4 bg-indigo-50 rounded-xl border border-indigo-100"
                   >
                     <p className="text-sm font-medium text-indigo-800 mb-2">AI Explanation</p>
-                    <p className="text-gray-700">{explanation}</p>
+                    <div className="text-gray-700 text-sm whitespace-pre-wrap">
+                      {parseExplanation(explanation).segments.map((seg, si) =>
+                        seg.type === 'bold' ? (
+                          <strong key={si} className="font-semibold text-gray-900">{seg.value}</strong>
+                        ) : seg.type === 'link' ? (
+                          <a key={si} href={seg.href} target="_blank" rel="noopener noreferrer" className="text-indigo-600 underline hover:text-indigo-800 break-all">{seg.value}</a>
+                        ) : (
+                          <span key={si}>{seg.value}</span>
+                        )
+                      )}
+                    </div>
                   </motion.div>
                 )}
 

@@ -1,5 +1,30 @@
 import { GoogleGenAI } from '@google/genai';
 
+export function parseExplanation(text: string): { segments: { type: 'text' | 'bold' | 'link'; value: string; href?: string }[] } {
+  const segments: { type: 'text' | 'bold' | 'link'; value: string; href?: string }[] = [];
+  const pattern = /(\*\*(.+?)\*\*)|(https?:\/\/[^\s)<]+)/g;
+  let lastIndex = 0;
+  let match;
+
+  while ((match = pattern.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      segments.push({ type: 'text', value: text.slice(lastIndex, match.index) });
+    }
+    if (match[1]) {
+      segments.push({ type: 'bold', value: match[2] });
+    } else if (match[3]) {
+      segments.push({ type: 'link', value: match[3], href: match[3] });
+    }
+    lastIndex = match.index + match[0].length;
+  }
+
+  if (lastIndex < text.length) {
+    segments.push({ type: 'text', value: text.slice(lastIndex) });
+  }
+
+  return { segments };
+}
+
 function getClient(): GoogleGenAI | null {
   const apiKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY;
   if (!apiKey) return null;
@@ -37,14 +62,24 @@ export async function chatWithCoach(
 
   try {
     const response = await ai.models.generateContent({
-      model: 'gemini-2.0-flash',
+      model: 'gemini-2.5-flash-lite',
       contents: message,
       config: { systemInstruction: buildCoachPrompt(context) },
     });
     return response.text ?? 'I could not generate a response. Please try again.';
-  } catch (error) {
-    console.error('AI Coach error:', error);
-    return 'Sorry, I encountered an error. Please try again.';
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : String(error);
+    console.error('AI Coach error:', msg, error);
+    if (msg.includes('API key')) {
+      return 'The AI API key appears to be invalid. Please check your Gemini API key configuration.';
+    }
+    if (msg.includes('quota') || msg.includes('429')) {
+      return 'The AI service is temporarily rate-limited. Please wait a moment and try again.';
+    }
+    if (msg.includes('404') || msg.includes('not found')) {
+      return 'The AI model is temporarily unavailable. Please try again in a moment.';
+    }
+    return `Sorry, I encountered an error: ${msg}. Please try again.`;
   }
 }
 
@@ -63,23 +98,41 @@ export async function explainQuestion(
   const userAnswer = selectedIndex !== null ? options[selectedIndex] : null;
   const wasCorrect = selectedIndex === correctIndex;
 
-  const prompt = `You are a SAFe certification tutor. Explain this quiz question and answer in 2-3 sentences, in a friendly, educational tone.
+  const prompt = `You are a SAFe 6.0 certification tutor. Explain this quiz question and answer in a friendly, educational tone.
 
 Question: ${question}
 Correct answer: ${correctAnswer}
 ${userAnswer && !wasCorrect ? `The user selected: ${userAnswer} (incorrect).` : ''}
 
-Explain why the correct answer is right${!wasCorrect && userAnswer ? ' and why the selected answer was wrong' : ''}.`;
+Your response MUST include ALL of the following sections:
+
+1. **Explanation** (2-3 sentences): Why the correct answer is right${!wasCorrect && userAnswer ? ' and why the selected answer was wrong' : ''}.
+
+2. **SAFe Reference**: Name the specific SAFe concept, principle, practice, or competency this relates to (e.g., "SAFe Principle #4 – Build Incrementally", "PI Planning", "Team Backlog", "Lean-Agile Leadership", etc.).
+
+3. **Learn More**: Provide a direct link to the relevant page on the official SAFe website. Use this format:
+   - For general SAFe concepts: https://scaledagileframework.com/<topic-slug>
+   - Common pages include: /safe-scrum-master, /pi-planning, /iteration-execution, /team-backlog, /product-owner, /safe-lean-agile-principles, /built-in-quality, /wsjf, /inspect-and-adapt, /agile-release-train, /continuous-delivery-pipeline, /devops, /lean-agile-leadership, /art-events, /iteration-planning, /iteration-review, /scrum-master, /features-and-capabilities, /story, /enablers, /program-increment, /safe-team-kanban, /system-demo, /release-on-demand, /continuous-exploration, /solution-train, /lean-portfolio-management
+   - Only use real scaledagileframework.com URLs. If unsure of the exact slug, use https://scaledagileframework.com/ as the base and your best guess for the path.
+
+Format your response clearly with the section headers bolded using ** markers.`;
 
   try {
     const response = await ai.models.generateContent({
-      model: 'gemini-2.0-flash',
+      model: 'gemini-2.5-flash-lite',
       contents: prompt,
     });
     return response.text ?? 'Could not generate explanation.';
-  } catch (error) {
-    console.error('Explain error:', error);
-    return 'Unable to generate explanation. Please try again.';
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : String(error);
+    console.error('Explain error:', msg, error);
+    if (msg.includes('leaked') || msg.includes('API key') || msg.includes('403')) {
+      return 'The AI API key needs to be updated. Please contact the administrator.';
+    }
+    if (msg.includes('quota') || msg.includes('429')) {
+      return 'The AI service is temporarily rate-limited. Please wait a moment and try again.';
+    }
+    return `Unable to generate explanation: ${msg}`;
   }
 }
 
@@ -126,7 +179,7 @@ ${trimmed}`;
 
   try {
     const response = await ai.models.generateContent({
-      model: 'gemini-2.0-flash',
+      model: 'gemini-2.5-flash-lite',
       contents: prompt,
     });
 
@@ -160,8 +213,12 @@ ${trimmed}`;
     }
 
     return { questions: validated };
-  } catch (error) {
-    console.error('Generate quiz error:', error);
-    return { error: 'Failed to generate quiz. Please try again.' };
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : String(error);
+    console.error('Generate quiz error:', msg, error);
+    if (msg.includes('leaked') || msg.includes('API key') || msg.includes('403')) {
+      return { error: 'The AI API key needs to be updated. Please contact the administrator.' };
+    }
+    return { error: `Failed to generate quiz: ${msg}` };
   }
 }

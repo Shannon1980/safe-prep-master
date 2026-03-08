@@ -33,6 +33,7 @@ import {
   formatTimeSince,
   type ExamSession,
 } from '@/app/lib/session-storage';
+import { setPresenceDetail, clearPresenceDetail } from '@/app/lib/presence';
 
 type ExamPhase = 'intro' | 'exam' | 'review' | 'results';
 
@@ -76,6 +77,7 @@ export default function ExamPage() {
     setCurrentIndex(0);
     setTimeRemaining(EXAM_CONFIG.timeLimitMinutes * 60);
     setPhase('exam');
+    setPresenceDetail(`Q1/${EXAM_CONFIG.totalQuestions}`);
   }, []);
 
   const resumeExam = useCallback(() => {
@@ -87,7 +89,18 @@ export default function ExamPage() {
     setSavedSession(null);
     clearSession('exam');
     setPhase('exam');
+    setPresenceDetail(`Q${savedSession.currentIndex + 1}/${savedSession.questions.length} (Resumed)`);
   }, [savedSession]);
+
+  // Update presence detail when navigating questions
+  useEffect(() => {
+    if (phase === 'exam' && questions.length > 0) {
+      const answered = questionStates.filter(s => s.selectedAnswer !== null || s.selectedAnswers.length > 0).length;
+      setPresenceDetail(`Q${currentIndex + 1}/${questions.length} (${answered} answered)`);
+    } else if (phase === 'results') {
+      setPresenceDetail('Reviewing Results');
+    }
+  }, [phase, currentIndex, questions.length]);
 
   // Timer
   useEffect(() => {
@@ -167,6 +180,22 @@ export default function ExamPage() {
       if (isQuestionCorrect(q, questionStates[i])) domainBreakdown[q.domain].correct++;
     });
 
+    const missedQuestions = questions
+      .map((q, i) => {
+        const state = questionStates[i];
+        const correct = isQuestionCorrect(q, state);
+        if (correct) return null;
+        return {
+          question: q.question,
+          options: q.options,
+          correctIndex: q.correctIndex,
+          selectedIndex: state.selectedAnswer,
+          isCorrect: false,
+          domain: q.domain,
+        };
+      })
+      .filter(Boolean) as { question: string; options: string[]; correctIndex: number; selectedIndex: number | null; isCorrect: boolean; domain: string }[];
+
     saveActivity({
       type: 'exam',
       score,
@@ -175,6 +204,7 @@ export default function ExamPage() {
       passed: percentage >= EXAM_CONFIG.passingPercentage,
       timeTakenSeconds: timeTaken,
       domainBreakdown,
+      missedQuestions,
     });
   }, [phase, questions, questionStates, timeRemaining]);
 
