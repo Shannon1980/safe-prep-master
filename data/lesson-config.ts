@@ -1,5 +1,6 @@
 import { QUIZ_QUESTIONS } from './quiz-questions';
 import { EXAM_QUESTIONS } from './exam-questions';
+import { fisherYatesShuffle } from '../app/lib/shuffle';
 
 export interface LessonSection {
   id: string;
@@ -798,27 +799,60 @@ export function getLessonQuestions(lessonId: number): LessonQuizQuestion[] {
   }
 
   // Shuffle
-  return questions.sort(() => Math.random() - 0.5);
+  return fisherYatesShuffle(questions);
 }
 
 /**
- * Get questions for a specific section within a lesson, capped at 10.
+ * Dynamic cap for section quizzes based on pool size.
+ */
+export function getSectionQuizCap(poolSize: number): number {
+  if (poolSize <= 10) return poolSize;
+  if (poolSize <= 20) return 10;
+  if (poolSize <= 40) return 12;
+  return 15;
+}
+
+/**
+ * Get questions for a specific section within a lesson, with a dynamic cap.
+ * If seenIds is provided, prioritizes unseen questions before recycling seen ones.
  * If externalPool is provided, uses that instead of the hardcoded bank.
  */
-export function getSectionQuestions(lessonId: number, sectionId: string, externalPool?: LessonQuizQuestion[]): LessonQuizQuestion[] {
+export function getSectionQuestions(
+  lessonId: number,
+  sectionId: string,
+  externalPool?: LessonQuizQuestion[],
+  seenIds?: Set<string>,
+): LessonQuizQuestion[] {
   const all = externalPool ?? getLessonQuestions(lessonId);
   const sectionQs = all.filter((q) => q.section === sectionId);
-  const shuffled = sectionQs.sort(() => Math.random() - 0.5);
-  return shuffled.slice(0, 10);
+  const cap = getSectionQuizCap(sectionQs.length);
+
+  if (seenIds && seenIds.size > 0) {
+    const unseen = sectionQs.filter((q) => !seenIds.has(q.id));
+    const seen = sectionQs.filter((q) => seenIds.has(q.id));
+    const shuffledUnseen = fisherYatesShuffle(unseen);
+    const shuffledSeen = fisherYatesShuffle(seen);
+    return [...shuffledUnseen, ...shuffledSeen].slice(0, cap);
+  }
+
+  return fisherYatesShuffle(sectionQs).slice(0, cap);
 }
 
 /**
- * Get the question count for a specific section (before the 10-cap).
+ * Get the question count for a specific section (before the cap).
  * If externalPool is provided, uses that instead of the hardcoded bank.
  */
 export function getSectionQuestionCount(lessonId: number, sectionId: string, externalPool?: LessonQuizQuestion[]): number {
   const all = externalPool ?? getLessonQuestions(lessonId);
   return all.filter((q) => q.section === sectionId).length;
+}
+
+/**
+ * Get pool size and dynamic quiz size for a section (for UI display).
+ */
+export function getSectionQuizInfo(lessonId: number, sectionId: string, externalPool?: LessonQuizQuestion[]): { poolSize: number; quizSize: number } {
+  const poolSize = getSectionQuestionCount(lessonId, sectionId, externalPool);
+  return { poolSize, quizSize: getSectionQuizCap(poolSize) };
 }
 
 /**

@@ -5,6 +5,7 @@ import { motion } from 'framer-motion';
 import Link from 'next/link';
 import { ChevronRight, RotateCcw } from 'lucide-react';
 import { FLASHCARDS, type Flashcard } from '@/data/flashcards';
+import { fisherYatesShuffle } from '@/app/lib/shuffle';
 
 const STORAGE_KEY = 'safe-prep-flashcard-progress';
 
@@ -31,7 +32,7 @@ export default function FlashcardsPage() {
   const [showReviewAgain, setShowReviewAgain] = useState(false);
 
   useEffect(() => {
-    const shuffled = [...FLASHCARDS].sort(() => Math.random() - 0.5);
+    const shuffled = fisherYatesShuffle(FLASHCARDS);
     setCards(shuffled);
     setProgress(getStoredProgress());
   }, []);
@@ -60,10 +61,10 @@ export default function FlashcardsPage() {
   const handleReviewAgain = () => {
     const toReview = cards.filter((c) => (progress[c.id] || 0) < 2);
     if (toReview.length === 0) {
-      setCards([...FLASHCARDS].sort(() => Math.random() - 0.5));
+      setCards(fisherYatesShuffle(FLASHCARDS));
       setProgress({});
     } else {
-      setCards(toReview.sort(() => Math.random() - 0.5));
+      setCards(fisherYatesShuffle(toReview));
     }
     setCurrentIndex(0);
     setIsFlipped(false);

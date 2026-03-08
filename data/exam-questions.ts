@@ -1,4 +1,5 @@
 import { QUIZ_QUESTIONS } from './quiz-questions';
+import { fisherYatesShuffle } from '../app/lib/shuffle';
 
 export interface ExamQuestion {
   id: string;
@@ -535,7 +536,7 @@ export function selectExamQuestions(count: number = 45, externalPool?: ExamQuest
 // They are currently extracted and will be re-inserted properly.
 
 
-    const shuffled = [...questions].sort(() => Math.random() - 0.5);
+    const shuffled = fisherYatesShuffle(questions);
     selected.push(...shuffled.slice(0, Math.min(target, shuffled.length)));
   }
 
@@ -543,7 +544,7 @@ export function selectExamQuestions(count: number = 45, externalPool?: ExamQuest
   const randomized = selected.map((q) => {
     const correctSet = new Set(q.correctIndices ?? [q.correctIndex]);
     const pairs = q.options.map((opt, i) => ({ opt, isCorrect: correctSet.has(i) }));
-    const shuffled = pairs.sort(() => Math.random() - 0.5);
+    const shuffled = fisherYatesShuffle(pairs);
     const newCorrectIndices = shuffled
       .map((p, i) => (p.isCorrect ? i : -1))
       .filter((i) => i !== -1);
@@ -555,5 +556,5 @@ export function selectExamQuestions(count: number = 45, externalPool?: ExamQuest
     };
   });
 
-  return randomized.sort(() => Math.random() - 0.5).slice(0, count);
+  return fisherYatesShuffle(randomized).slice(0, count);
 }

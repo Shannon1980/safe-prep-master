@@ -26,6 +26,7 @@ import {
   getLessonQuestions,
   getSectionQuestions,
   getSectionQuestionCount,
+  getSectionQuizInfo,
   type LessonConfig,
   type LessonSection,
   type LessonQuizQuestion,
@@ -33,6 +34,8 @@ import {
 import { explainQuestion } from '@/app/lib/gemini';
 import { saveActivity } from '@/app/lib/activity';
 import { getFullLessonPool } from '@/app/lib/question-bank';
+import { fisherYatesShuffle } from '@/app/lib/shuffle';
+import { getSeenQuestionIds, markQuestionsSeen } from '@/app/lib/seen-questions';
 import {
   saveSession,
   loadSession,
@@ -115,7 +118,11 @@ export default function LessonQuizPage() {
     clearSession('lesson_quiz');
     setSavedSessionData(null);
     const pool = await fetchLessonPool(lesson.id);
-    const qs = pool.sort(() => Math.random() - 0.5);
+    const seenIds = new Set(getSeenQuestionIds(lesson.id, '_full'));
+    const unseen = pool.filter((q) => !seenIds.has(q.id));
+    const seen = pool.filter((q) => seenIds.has(q.id));
+    const qs = [...fisherYatesShuffle(unseen), ...fisherYatesShuffle(seen)];
+    markQuestionsSeen(lesson.id, '_full', qs.map((q) => q.id));
     setSelectedLesson(lesson);
     setSelectedSection(null);
     setIsSectionQuiz(false);
@@ -133,8 +140,10 @@ export default function LessonQuizPage() {
     clearSession('lesson_quiz');
     setSavedSessionData(null);
     const pool = await fetchLessonPool(lesson.id);
-    const qs = getSectionQuestions(lesson.id, section.id, pool);
+    const seenIds = new Set(getSeenQuestionIds(lesson.id, section.id));
+    const qs = getSectionQuestions(lesson.id, section.id, pool, seenIds);
     if (qs.length === 0) return;
+    markQuestionsSeen(lesson.id, section.id, qs.map((q) => q.id));
     setSelectedLesson(lesson);
     setSelectedSection(section);
     setIsSectionQuiz(true);
@@ -444,12 +453,11 @@ export default function LessonQuizPage() {
             <div className="flex items-center gap-2 mb-4">
               <Layers className="w-5 h-5 text-gray-400" />
               <h2 className="text-lg font-bold">Section Quizzes</h2>
-              <span className="text-xs text-gray-400">Max 10 questions each</span>
+              <span className="text-xs text-gray-400">Selected from question pool</span>
             </div>
             <div className="space-y-3">
               {selectedLesson.sections.map((section) => {
-                const sectionTotal = getSectionQuestionCount(selectedLesson.id, section.id, lessonPoolCache[selectedLesson.id]);
-                const quizCount = Math.min(sectionTotal, 10);
+                const { poolSize: sectionTotal, quizSize: quizCount } = getSectionQuizInfo(selectedLesson.id, section.id, lessonPoolCache[selectedLesson.id]);
                 return (
                   <button
                     key={section.id}
@@ -465,7 +473,7 @@ export default function LessonQuizPage() {
                         <h3 className="font-semibold">{section.name}</h3>
                         <p className="text-xs text-gray-400 mt-0.5">
                           {quizCount} question{quizCount !== 1 ? 's' : ''}
-                          {sectionTotal > 10 && ` (from ${sectionTotal} available)`}
+                          {sectionTotal > quizCount && ` (from ${sectionTotal} available)`}
                         </p>
                       </div>
                       <ChevronRight className="w-4 h-4 text-gray-300 group-hover:text-indigo-500 transition-colors flex-shrink-0" />

@@ -13,6 +13,7 @@ import { getFirebaseDb, getFirebaseAuth } from './firebase';
 import { EXAM_QUESTIONS, type ExamQuestion, type ExamDomain } from '../../data/exam-questions';
 import { QUIZ_QUESTIONS } from '../../data/quiz-questions';
 import { getLessonQuestions, type LessonQuizQuestion } from '../../data/lesson-config';
+import { fisherYatesShuffle } from './shuffle';
 
 // ── Types ──
 
@@ -232,7 +233,7 @@ export async function getFullLessonPool(lessonId: number): Promise<LessonQuizQue
     });
   }
 
-  return result.sort(() => Math.random() - 0.5);
+  return fisherYatesShuffle(result);
 }
 
 /**
